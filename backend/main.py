@@ -76,7 +76,7 @@ async def health():
     }
 
 # Frontend Router
-dist = Path("./dist")
+dist = Path("./dist").resolve()
 frontend_router = APIRouter()
 
 @frontend_router.get("/{path:path}")
@@ -85,7 +85,20 @@ async def frontend_handler(path: str):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="API path not found")
 
+    # Disallow path traversal sequences to prevent reading files outside dist
+    if ".." in path:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail="Invalid path")
+
     fp = dist / path
+    # Ensure the resolved path is still within dist (defense in depth)
+    try:
+        fp = fp.resolve()
+        if not str(fp).startswith(str(dist)):
+            fp = dist / "index.html"
+    except (OSError, RuntimeError):
+        fp = dist / "index.html"
+
     if path == "" or not fp.exists():
         fp = dist / "index.html"
 

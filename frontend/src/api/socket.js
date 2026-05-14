@@ -45,7 +45,8 @@ export class WebSocketClient {
       };
       
       this.socket.onmessage = (event) => {
-        this.logger.log("WebSocket message received:", event.data);
+        // Serialize user-controlled data to prevent log injection
+        this.logger.log("WebSocket message received:", JSON.stringify(event.data));
         try {
           // Try to parse as JSON first
           let jsonData;

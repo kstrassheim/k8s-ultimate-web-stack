@@ -51,6 +51,15 @@ const copyLogos = () => {
 // Path to the manifest file
 const manifestPath = resolve(__dirname, 'public/site.webmanifest');
 
+// Atomic write helper: write to temp file then rename to target.
+// This prevents the file from being read in a partially-written state
+// (avoids TOCTOU race condition between read and write).
+const atomicWriteJson = (filePath, data) => {
+  const tmpPath = `${filePath}.tmp.${process.pid}`;
+  fs.writeFileSync(tmpPath, JSON.stringify(data, null, 2), 'utf8');
+  fs.renameSync(tmpPath, filePath);
+};
+
 // Add this function after copyLogos function
 const generateWebManifest = () => {
   try {
@@ -93,9 +102,8 @@ const generateWebManifest = () => {
     manifest.name = appName;
     manifest.short_name = appName;
     
-    // Write updated manifest back to file
-
-    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+    // Atomic write prevents another process from reading a partial write
+    atomicWriteJson(manifestPath, manifest);
     console.log(`Generated site.webmanifest with app name: "${appName}"`);
   } catch (error) {
     console.error('Error generating site.webmanifest:', error);
