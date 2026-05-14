@@ -59,7 +59,7 @@ const args = [
 ];
 
 // Add debugpy args if needed
-const enableDebug = true //process.env.ENABLE_DEBUG === 'true';
+const enableDebug = process.env.ENABLE_DEBUG === 'true';
 if (enableDebug) {
   //args.unshift('--wait-for-client');
   args.unshift('5678');

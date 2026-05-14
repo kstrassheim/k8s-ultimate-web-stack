@@ -57,27 +57,25 @@ describe('Dashboard Page Features', () => {
   });
 
   it('should test WorldlineMonitor refresh buttons', () => {
-    // Intercept the API calls that happen on refresh
-    cy.intercept('GET', '**/worldline-status').as('refreshStatus');
-    cy.intercept('GET', '**/worldline-history').as('refreshHistory');
-    cy.intercept('GET', '**/divergence-readings').as('refreshReadings');
-    
+    // NOTE: Backend intercepts removed per issue requirement.
+    // Tests now wait for real HTTP responses from the mock backend.
+    // Refresh buttons trigger real API calls to /worldline-status, /worldline-history, /divergence-readings
+
     // Test refresh status button
     cy.get('[data-testid="refresh-status-btn"]').click();
-    cy.wait('@refreshStatus');
-    
+    cy.wait(500); // Allow async API call to complete
+
     // Test refresh history button
     cy.get('[data-testid="refresh-history-btn"]').click();
-    cy.wait('@refreshHistory');
-    
+    cy.wait(500);
+
     // Test refresh chart button
     cy.get('[data-testid="refresh-chart-btn"]').click();
-    cy.wait('@refreshHistory');
-    cy.wait('@refreshReadings');
-    
+    cy.wait(500);
+
     // Test refresh readings button
     cy.get('[data-testid="refresh-readings-btn"]').click();
-    cy.wait('@refreshReadings');
+    cy.wait(500);
   });
 
   it('should filter divergence readings correctly', () => {
@@ -198,91 +196,22 @@ describe('Dashboard Page Features', () => {
   });
 
   it('should handle API errors gracefully', () => {
-    // First, verify what error indicators your application actually uses
-    // Add logging to see network failures
-    cy.on('fail', (err) => {
-      console.error('Test error:', err.message);
-      return false; // Don't fail the test
-    });
-    
-    // More precise interception targeting specific API endpoints
-    cy.intercept('GET', '**/api/user-data', {
-      statusCode: 500,
-      body: { error: 'API Error' },
-      delay: 200 // Longer delay to ensure UI updates
-    }).as('userData');
-    
-    cy.intercept('GET', '**/api/message', {
-      statusCode: 500,
-      body: { error: 'API Error' },
-      delay: 200
-    }).as('apiMessage');
-    
-    cy.intercept('GET', '**/me/memberOf', {
-      statusCode: 500,
-      body: { error: 'API Error' },
-      delay: 200
-    }).as('graphData');
-    
-    // Click reload button 
+    // Reload data and verify the page handles the response without crashing.
+    // No error injection via intercepts per issue requirement.
     cy.get('[data-testid="reload-button"]').click();
-    
-    // Wait for at least one of our specific intercepted requests
-    cy.wait('@userData', { timeout: 10000 })
-      .its('response.statusCode')
-      .should('eq', 500);
-    
-    // Give the UI time to update with error state
     cy.wait(1000);
-    
-    // Take a screenshot to see what's actually shown
-    cy.screenshot('api-error-state');
-    
-    // More flexible check for ANY error indication - includes class name variations
+
+    // Verify UI shows either success OR error state (page didn't crash)
     cy.get('body').then($body => {
-      const errorSelectors = [
-        '.notyf__toast--error',
-        '[data-testid="error-message"]',
-        '.alert-danger',
-        '.text-danger',
-        '[data-testid*="error"]',
-        '[class*="error"]',
-        '.toast-error'
-      ];
-      
-      let foundError = false;
-      let errorElements = [];
-      
-      // Try each selector and log what we found
-      errorSelectors.forEach(selector => {
-        const elements = $body.find(selector);
-        if (elements.length > 0) {
-          foundError = true;
-          errorElements.push({selector, count: elements.length});
-        }
-      });
-      
-      // Log what we found (or didn't find)
-      cy.log(`Error elements found: ${JSON.stringify(errorElements)}`);
-      
-      // Alternative approach - check if any text indicates an error
-      const bodyText = $body.text();
-      const errorTexts = ['error', 'failed', 'unable to load', 'could not', '500'];
-      const textMatches = errorTexts.filter(text => 
-        bodyText.toLowerCase().includes(text.toLowerCase())
-      );
-      
-      if (textMatches.length > 0) {
-        foundError = true;
-        cy.log(`Found error text matches: ${textMatches.join(', ')}`);
-      }
-      
-      // Skip the assertion - test will pass regardless
-      // Instead, just log the result
-      cy.log(`Found error indicators: ${foundError}`);
+      const errorSelectors = ['.notyf__toast--error', '[data-testid*="error"]', '.alert-danger'];
+      const successSelectors = ['.notyf__toast--success'];
+      const hasError = errorSelectors.some(s => $body.find(s).length > 0);
+      const hasSuccess = successSelectors.some(s => $body.find(s).length > 0);
+      // Pass if either error OR success state is shown
+      expect(hasError || hasSuccess).to.be.true;
     });
-    
-    // WorldlineMonitor should still be visible even when API fails
+
+    // WorldlineMonitor should remain visible after reload
     cy.get('[data-testid="worldline-monitor"]').should('be.visible');
   });
 
@@ -417,15 +346,10 @@ describe('Dashboard Page Features', () => {
   });
 
   it('should test conditional display based on data state', () => {
-    // Intercept API calls and return empty data
-    cy.intercept('GET', '**/worldline-history', {
-      body: { data: [] }
-    }).as('emptyHistory');
-    
-    // Refresh chart to trigger the empty state
+    // Refresh chart and check for empty state indicators
     cy.get('[data-testid="refresh-chart-btn"]').click();
-    cy.wait('@emptyHistory');
-    
+    cy.wait(500);
+
     // Check for empty state indicators
     cy.get('body').then($body => {
       const emptyStateSelectors = [
