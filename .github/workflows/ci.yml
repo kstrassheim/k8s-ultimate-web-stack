@@ -171,17 +171,45 @@ jobs:
           # Persist PID for later cleanup
           echo "BACKEND_PID=$BACKEND_PID" >> $GITHUB_ENV
 
-      - name: Run E2E Tests
+      - name: Start frontend (mock mode)
+        run: |
+          cd frontend
+          # Start frontend in mock mode - serves at port 5173
+          # npm_config_mock=true is already set in the job env
+          npm run test:frontend &
+          FRONTEND_PID=$!
+          echo "Frontend PID: $FRONTEND_PID"
+          # Wait for frontend to be healthy
+          for i in {1..30}; do
+            if curl -sf http://localhost:5173 > /dev/null 2>&1; then
+              echo "Frontend is healthy"
+              break
+            fi
+            echo "Waiting for frontend to start... ($i/30)"
+            sleep 2
+          done
+          echo "FRONTEND_PID=$FRONTEND_PID" >> $GITHUB_ENV
+
+      - name: Run E2E Tests (Cypress directly, no server spawning)
         env:
           npm_config_mock: 'true'
         run: |
           cd frontend
-          npm run test:e2e:coverage
+          # Run Cypress directly - backend is already running in the background
+          # Do NOT use test:e2e:coverage (it spawns its own backend causing EADDRINUSE)
+          npx cypress run --browser chrome --env coverage=true
           mkdir -p .nyc_output
           if [ "$(find .nyc_output -name '*.json' | wc -l)" -eq 0 ]; then
             echo '{}' > .nyc_output/coverage-placeholder.json
           fi
           npm run coverage:report:no-check
+
+      - name: Stop frontend
+        if: always()
+        run: |
+          if [ -n "$FRONTEND_PID" ]; then
+            kill $FRONTEND_PID 2>/dev/null || true
+          fi
 
       - name: Stop backend
         if: always()
