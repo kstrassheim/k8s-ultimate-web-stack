@@ -10,15 +10,10 @@
 // 'supportFile' configuration option.
 // ***********************************************************
 
-// Import commands.js using ES2015 syntax:
-// import './commands'
-
-// Alternatively you can use CommonJS syntax:
-// require('./commands')
-// Import commands.js using ES2015 syntax:
 import 'cypress-wait-until';
 import './msalMock';
-import '@cypress/code-coverage/support';
+// NOTE: @cypress/code-coverage support is registered via cypress.config.js setupNodeEvents.
+// Do NOT import '@cypress/code-coverage/support' here as that causes duplicate registration.
 
 // Example of global behavior modification
 Cypress.on('uncaught:exception', (err, runnable) => {
