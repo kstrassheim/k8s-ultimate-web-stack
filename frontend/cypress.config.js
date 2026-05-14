@@ -36,28 +36,28 @@ export default defineConfig({
         }
       });
       
-      // Register tasks here, not in e2e.js
-      on('task', {
-        coverageReport: () => {
+      setupNodeEvents(on, config) {
+      on('after:spec', (spec, results) => {
+        // If the spec has a video and none of the tests failed
+        if (results && results.video && !results.tests.some(test => test.state === 'failed')) {
+          console.log(`Deleting video for passing spec: ${spec.name}`);
+          
+          // Delete the video file
           try {
-            // Use the no-check version of the report script that won't fail on coverage thresholds
-            require('child_process').execSync('npm run coverage:report:no-check', {
-              encoding: 'utf8',
-              stdio: 'inherit'
-            });
-            return null;  // Return value is important for Cypress tasks
+            fs.unlinkSync(results.video);
           } catch (error) {
-            console.error('Error generating coverage report:', error.message);
-            // Still return null even when the command fails to prevent test failures
-            return null;
+            console.error('Error deleting video:', error);
           }
         }
       });
       
-      // Use the imported task directly
+      // Use the imported task directly (no custom coverageReport needed)
+      // @cypress/code-coverage handles coverage collection via after:spec/after:run hooks
+      // Coverage report is generated separately in CI via `npm run coverage:report:no-check`
       codeCoverageTask(on, config);
       
       return config;
+    }
     }
   }
 });
