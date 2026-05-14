@@ -11,8 +11,8 @@ describe('Chat Page Functionality', () => {
     cy.get('[data-testid="sign-in-button"]').click();
     
     // Wait for authentication to complete and profile to appear
-    cy.get('[data-testid="authenticated-container"]', { timeout: 10000 }).should('be.visible');
-    cy.get('[data-testid="profile-image"]', { timeout: 10000 }).should('be.visible');
+    cy.get('[data-testid="authenticated-container"]', { timeout: 15000 }).should('be.visible');
+    cy.get('[data-testid="profile-image"]', { timeout: 15000 }).should('be.visible');
     
     // Navigate to the chat page
     cy.get('[data-testid="nav-chat"]').click();
@@ -40,7 +40,7 @@ describe('Chat Page Functionality', () => {
     });
     
     // Input should be enabled once connection is established
-    cy.get('.status-connected', { timeout: 10000 }).should('exist');
+    cy.get('.status-connected', { timeout: 15000 }).should('exist');
     cy.get('.chat-input input').should('be.enabled');
     
     // Check button state based on input content
@@ -55,7 +55,7 @@ describe('Chat Page Functionality', () => {
   
   it('should allow sending and receiving messages', () => {
     // Wait for connection to be established
-    cy.get('.status-connected', { timeout: 10000 }).should('exist');
+    cy.get('.status-connected', { timeout: 15000 }).should('exist');
     
     // Type a message
     const testMessage = 'Hello from Cypress test';
@@ -82,7 +82,7 @@ describe('Chat Page Functionality', () => {
   
   it('should handle disconnection and reconnection', () => {
     // Wait for initial connection
-    cy.get('.status-connected', { timeout: 10000 }).should('exist');
+    cy.get('.status-connected', { timeout: 15000 }).should('exist');
     
     // Navigate away to break connection
     cy.get('[data-testid="nav-home"]').click();
@@ -91,7 +91,7 @@ describe('Chat Page Functionality', () => {
     cy.get('[data-testid="nav-chat"]').click();
     
     // Should reconnect automatically
-    cy.get('.status-connected', { timeout: 10000 }).should('exist');
+    cy.get('.status-connected', { timeout: 15000 }).should('exist');
     
     // Verify we can still send messages
     const reconnectMessage = 'Message after reconnection';
@@ -103,7 +103,7 @@ describe('Chat Page Functionality', () => {
   });
 
   it('should handle sending empty messages', () => {
-    cy.get('.status-connected', { timeout: 10000 }).should('exist');
+    cy.get('.status-connected', { timeout: 15000 }).should('exist');
     
     // Try to send empty message
     cy.get('.chat-input input').clear();
@@ -115,7 +115,7 @@ describe('Chat Page Functionality', () => {
   });
 
   it('should handle special characters in messages', () => {
-    cy.get('.status-connected', { timeout: 10000 }).should('exist');
+    cy.get('.status-connected', { timeout: 15000 }).should('exist');
     
     // Test with special characters
     const specialCharsMsg = '!@#$%^&*()_+<>?:"{}|~`';

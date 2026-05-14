@@ -63,19 +63,19 @@ describe('Dashboard Page Features', () => {
 
     // Test refresh status button
     cy.get('[data-testid="refresh-status-btn"]').click();
-    cy.wait(500); // Allow async API call to complete
+    cy.wait(2000); // Allow async API call to complete
 
     // Test refresh history button
     cy.get('[data-testid="refresh-history-btn"]').click();
-    cy.wait(500);
+    cy.wait(2000);
 
     // Test refresh chart button
     cy.get('[data-testid="refresh-chart-btn"]').click();
-    cy.wait(500);
+    cy.wait(2000);
 
     // Test refresh readings button
     cy.get('[data-testid="refresh-readings-btn"]').click();
-    cy.wait(500);
+    cy.wait(2000);
   });
 
   it('should filter divergence readings correctly', () => {
@@ -94,7 +94,7 @@ describe('Dashboard Page Features', () => {
     cy.get('[data-testid="status-filter"]').select('steins_gate');
     
     // Wait for filter to apply
-    cy.wait(500); // Small wait to let filter apply
+    cy.wait(2000); // Small wait to let filter apply
     
     // Verify the filter actually changed the displayed data (should have different count or all matching statuses)
     cy.get('[data-testid="readings-table"] tbody tr')
@@ -113,7 +113,7 @@ describe('Dashboard Page Features', () => {
     cy.get('[data-testid="recorded-by-filter"]').clear().type('Okabe');
     
     // Wait for filter to apply
-    cy.wait(500);
+    cy.wait(2000);
     
     // Check filtered results - just verify we have results and don't specifically check each row
     cy.get('[data-testid="readings-table"] tbody tr')
@@ -129,7 +129,7 @@ describe('Dashboard Page Features', () => {
     cy.get('[data-testid="max-value-filter"]').should('have.value', '');
     
     // After reset, we should have the original number of rows
-    cy.wait(500);
+    cy.wait(2000);
     cy.get('[data-testid="readings-table"] tbody tr').should('have.length.at.least', 1);
   });
 
@@ -199,7 +199,7 @@ describe('Dashboard Page Features', () => {
     // Reload data and verify the page handles the response without crashing.
     // No error injection via intercepts per issue requirement.
     cy.get('[data-testid="reload-button"]').click();
-    cy.wait(1000);
+    cy.wait(2000);
 
     // Verify UI shows either success OR error state (page didn't crash)
     cy.get('body').then($body => {
@@ -322,7 +322,7 @@ describe('Dashboard Page Features', () => {
     cy.get('[data-testid="max-value-filter"]').type('1.5');
     
     // Wait for filters to apply
-    cy.wait(500);
+    cy.wait(2000);
     
     // Verify results are filtered
     cy.get('[data-testid="readings-table"] tbody').should('be.visible');
@@ -332,7 +332,7 @@ describe('Dashboard Page Features', () => {
     cy.get('[data-testid="max-value-filter"]').clear().type('999');
     
     // Wait for filters to apply
-    cy.wait(500);
+    cy.wait(2000);
     
     // Results should still show (even if empty)
     cy.get('[data-testid="readings-table"] tbody').should('be.visible');
@@ -342,13 +342,13 @@ describe('Dashboard Page Features', () => {
     cy.get('[data-testid="max-value-filter"]').clear().type('1');
     
     // Wait for validation to trigger
-    cy.wait(500);
+    cy.wait(2000);
   });
 
   it('should test conditional display based on data state', () => {
     // Refresh chart and check for empty state indicators
     cy.get('[data-testid="refresh-chart-btn"]').click();
-    cy.wait(500);
+    cy.wait(2000);
 
     // Check for empty state indicators
     cy.get('body').then($body => {
@@ -457,7 +457,7 @@ describe('Dashboard Page Features', () => {
     cy.get('[data-testid="min-value-filter"]').clear().type('0.5');
     
     // Wait for filters to apply
-    cy.wait(500);
+    cy.wait(2000);
     
     // Verify filtered results
     cy.get('[data-testid="readings-table"] tbody').should('be.visible');

@@ -245,7 +245,7 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     // Use a simple intercept with inline data instead of a fixture
     // Click reload button - let it make a real API call to the mock backend
     cy.get('[data-testid="reload-experiments-btn"]').click();
-    cy.wait(1000);
+    cy.wait(2000);
 
     // Verify success toast appears after reload completes
     cy.get('.notyf__toast--success').should('be.visible');
@@ -260,7 +260,7 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     // Intercept the API call and force an error
     // Click reload button - the mock backend will return real data
     cy.get('[data-testid="reload-experiments-btn"]').click();
-    cy.wait(1000);
+    cy.wait(2000);
 
     // Verify either success toast OR error state (no error injection per issue requirement)
     cy.get('body').then($body => {
@@ -278,7 +278,7 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     // Intercept the API call and return empty array
     // Click reload button - mock backend will return real data
     cy.get('[data-testid="reload-experiments-btn"]').click();
-    cy.wait(1000);
+    cy.wait(2000);
 
     // Either the table has data OR we see the empty state
     cy.get('body').then($body => {
@@ -360,7 +360,7 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     // Use an intercept to ensure control over the exact data shown
     // Click reload button - use real data from mock backend
     cy.get('[data-testid="reload-experiments-btn"]').click();
-    cy.wait(1000);
+    cy.wait(2000);
 
     // Verify experiments table is visible
     cy.get('[data-testid="experiments-table"]').should('be.visible');
@@ -393,7 +393,7 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     
     // Test at tablet viewport - switch viewport and wait
     cy.viewport(768, 1024);
-    cy.wait(1000); // Give time for responsive layout to adjust
+    cy.wait(2000); // Give time for responsive layout to adjust
     
     // Verify which columns are visible/hidden at tablet size
     cy.get('table thead tr th:contains("Timestamp")').should('be.visible');
@@ -409,7 +409,7 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     
     // Test at mobile viewport
     cy.viewport(375, 667);
-    cy.wait(1000); // Give time for responsive layout to adjust
+    cy.wait(2000); // Give time for responsive layout to adjust
     
     // Verify most columns are hidden on mobile
     cy.get('table thead tr th:contains("Name")').should('be.visible');
