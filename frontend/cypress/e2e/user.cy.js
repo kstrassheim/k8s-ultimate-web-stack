@@ -20,22 +20,25 @@ describe('User Flow Test', () => {
   });
 
   // Updated to test the Dashboard page instead of Home
+  // NOTE: intercept must be set up BEFORE any request is triggered.
+  // The beforeEach already triggers /api/user-data during dashboard load,
+  // so we intercept the RELOAD button click instead (a fresh request).
   it('should display and interact with the dashboard page - basic checks', () => {
-    // First, intercept the API calls to add delay
+    // Check we're on the dashboard page
+    cy.get('[data-testid="dashboard-page"]').should('be.visible');
+    
+    // Intercept the reload request (set up BEFORE the click so it can catch the request)
     cy.intercept('GET', '**/api/user-data', {
       body: { message: 'Hello from API' },
       delay: 1000 // Add a delay to ensure we can see the loading state
     }).as('userData');
     
-    // Check we're on the dashboard page
-    cy.get('[data-testid="dashboard-page"]').should('be.visible');
-    
-    // Check for success toast notification - with sufficient timeout
+    // Check for success toast notification from the initial dashboard load
     cy.get('.notyf', { timeout: 5000 }).should('exist');
     cy.get('.notyf__toast--success').should('be.visible');
     cy.get('.notyf__toast--success').should('contain.text', 'Data loaded successfully');
     
-    // Check API data loaded
+    // Check API data loaded (may already be present from beforeEach)
     cy.get('[data-testid="api-response-card"]').should('be.visible');
     cy.get('[data-testid="api-message-data"]').should('be.visible');
     cy.get('[data-testid="api-message-data"]').should('not.be.empty');
@@ -43,7 +46,7 @@ describe('User Flow Test', () => {
     // Wait for the toast to disappear before continuing
     cy.wait(4500);
     
-    // Test reload functionality - click button
+    // Test reload functionality - click button (intercept catches this fresh request)
     cy.get('[data-testid="reload-button"]').click();
     
     // Now the button should be disabled - add a short pause to ensure React has time to update
