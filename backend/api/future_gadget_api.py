@@ -104,10 +104,12 @@ class DivergenceReadingCreate(DivergenceReadingBase):
 
 # --- REST Endpoints ---
 
+@future_gadget_api_router.get("/lab-experiments", response_model=List[Dict])
 @future_gadget_api_router.get("/experiments", response_model=List[Dict])
 async def get_experiments():
     return fgl_service.get_all_experiments()
 
+@future_gadget_api_router.get("/lab-experiments/{experiment_id}", response_model=Dict)
 @future_gadget_api_router.get("/experiments/{experiment_id}", response_model=Dict)
 async def get_experiment(experiment_id: str):
     exp = fgl_service.get_experiment_by_id(experiment_id)
@@ -115,10 +117,12 @@ async def get_experiment(experiment_id: str):
         raise HTTPException(status_code=404, detail="Experiment not found")
     return exp
 
+@future_gadget_api_router.post("/lab-experiments", response_model=Dict)
 @future_gadget_api_router.post("/experiments", response_model=Dict)
 async def create_experiment(exp: ExperimentCreate):
     return fgl_service.create_experiment(exp.model_dump())
 
+@future_gadget_api_router.put("/lab-experiments/{experiment_id}", response_model=Dict)
 @future_gadget_api_router.put("/experiments/{experiment_id}", response_model=Dict)
 async def update_experiment(experiment_id: str, exp: ExperimentUpdate):
     updated = fgl_service.update_experiment(experiment_id, exp.model_dump(exclude_unset=True))
@@ -126,6 +130,7 @@ async def update_experiment(experiment_id: str, exp: ExperimentUpdate):
         raise HTTPException(status_code=404, detail="Experiment not found")
     return updated
 
+@future_gadget_api_router.delete("/lab-experiments/{experiment_id}")
 @future_gadget_api_router.delete("/experiments/{experiment_id}")
 async def delete_experiment(experiment_id: str):
     if not fgl_service.delete_experiment(experiment_id):
@@ -197,7 +202,7 @@ async def get_worldline_history():
 
 # --- WebSocket Endpoints ---
 
-@future_gadget_api_router.websocket("/ws/experiments")
+@future_gadget_api_router.websocket("/ws/lab-experiments")
 async def experiments_websocket(websocket: WebSocket):
     await experiment_connection_manager.connect(websocket)
     try:
