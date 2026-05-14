@@ -176,7 +176,7 @@ class TestMainModule:
         assert response.headers.get("access-control-allow-credentials") == "true"
     
     @pytest.mark.skip(reason="mock_middleware fixture undefined; OTel middleware not configured in k8s-port")
-    def test_opentelemetry_middleware_configuration(self, mock_middleware):
+    def test_opentelemetry_middleware_configuration(self):
         """Test that OpenTelemetry middleware is configured with the FastAPIInstrumentor"""
         # Check that app has middleware
         assert len(app.user_middleware) > 0

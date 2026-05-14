@@ -130,8 +130,8 @@ jobs:
           pip install -r requirements.txt
           # Copy mock terraform config for MOCK=true test runs
           cp -n mock/terraform.mock.config.json terraform.config.json 2>/dev/null || true
-          # Mock MongoDB URI for CI tests
-          echo "MONGODB_URI=mongodb://localhost:27017" >> $GITHUB_ENV
+          # Use MOCK mode so no real MongoDB is needed
+          echo "MOCK=true" >> $GITHUB_ENV
 
       - name: Install frontend dependencies
         run: |
