@@ -19,44 +19,31 @@ describe('User Flow Test', () => {
     cy.url().should('include', '/dashboard');
   });
 
-  // Updated to test the Dashboard page instead of Home
-  // NOTE: intercept must be set up BEFORE any request is triggered.
-  // The beforeEach already triggers /api/user-data during dashboard load,
-  // so we intercept the RELOAD button click instead (a fresh request).
+  // NOTE: All backend API calls use the real mock backend (TinyDB).
+  // No Cypress intercepts are used per issue requirement.
+  // Tests wait for actual API responses from the mock backend.
+
   it('should display and interact with the dashboard page - basic checks', () => {
     // Check we're on the dashboard page
     cy.get('[data-testid="dashboard-page"]').should('be.visible');
-    
-    // Intercept the reload request (set up BEFORE the click so it can catch the request)
-    cy.intercept('GET', '**/api/user-data', {
-      body: { message: 'Hello from API' },
-      delay: 1000 // Add a delay to ensure we can see the loading state
-    }).as('userData');
     
     // Check for success toast notification from the initial dashboard load
     cy.get('.notyf', { timeout: 5000 }).should('exist');
     cy.get('.notyf__toast--success').should('be.visible');
     cy.get('.notyf__toast--success').should('contain.text', 'Data loaded successfully');
     
-    // Check API data loaded (may already be present from beforeEach)
+    // Check API data loaded
     cy.get('[data-testid="api-response-card"]').should('be.visible');
     cy.get('[data-testid="api-message-data"]').should('be.visible');
     cy.get('[data-testid="api-message-data"]').should('not.be.empty');
     
-    // Wait for the toast to disappear before continuing
-    cy.wait(4500);
-    
-    // Test reload functionality - click button (intercept catches this fresh request)
+    // Test reload functionality
     cy.get('[data-testid="reload-button"]').click();
     
-    // Now the button should be disabled - add a short pause to ensure React has time to update
-    cy.wait(100); // Small wait to ensure React state updates
+    // Button should become disabled during loading
     cy.get('[data-testid="reload-button"]').should('be.disabled');
     
-    // Wait for intercept to complete
-    cy.wait('@userData');
-    
-    // Wait for reload to complete
+    // Wait for reload to complete (real API call)
     cy.get('[data-testid="reload-button"]', { timeout: 10000 })
       .should('not.be.disabled')
       .should('have.text', 'Reload Data');
@@ -65,48 +52,18 @@ describe('User Flow Test', () => {
     cy.get('.notyf__toast--success', { timeout: 5000 }).should('be.visible');
   });
   
-  it('should display and interact with the dashboard page - intercept short delay', () => {
-    // Intercept with a delay so we can see loading state
-    cy.intercept('GET', '**/api/user-data', {
-      body: { message: 'Hello from API' },
-      delay: 1500 // 1.5s delay
-    }).as('userData');
-
-    // Trigger reload
+  it('should display and interact with the dashboard page - verify button states', () => {
+    // Trigger reload and check button state changes
     cy.get('[data-testid="reload-button"]').click();
     
-    // Check button becomes disabled
+    // Button should become disabled immediately
     cy.get('[data-testid="reload-button"]').should('be.disabled');
-
-    // Wait for intercept to finish
-    cy.wait('@userData');
     
-    // After the request completes, button should be enabled again
-    cy.get('[data-testid="reload-button"]')
+    // Wait for reload to complete
+    cy.get('[data-testid="reload-button"]', { timeout: 10000 })
       .should('not.be.disabled');
   });
   
-  it('should display and interact with the dashboard page - intercept long delay', () => {
-    // Intercept the user-data request and delay it
-    cy.intercept('GET', '**/api/user-data', {
-      body: { message: 'Hello from API' },
-      delay: 2000 // 2 seconds
-    }).as('userData');
-
-    // Click reload
-    cy.get('[data-testid="reload-button"]').click();
-    
-    // Check button becomes disabled
-    cy.get('[data-testid="reload-button"]').should('be.disabled');
-
-    // Wait for request to finish
-    cy.wait('@userData');
-
-    // Check button is enabled again
-    cy.get('[data-testid="reload-button"]').should('not.be.disabled');
-  });
-  
-  // Update this test - remove checking for nav-experiments
   it('should be denied access to experiments page', () => {
     // Experiments link should not exist in DOM
     cy.get('[data-testid="nav-experiments"]').should('not.exist');
@@ -139,7 +96,6 @@ describe('User Flow Test', () => {
     cy.contains('Welcome').should('be.visible');
   });
 
-  // Update this test - verify experiments link is NOT visible
   it('should interact with the Bootstrap navbar correctly', () => {
     // Test the Bootstrap navigation
     cy.get('[data-testid="main-navigation"]').should('be.visible');
@@ -168,41 +124,6 @@ describe('User Flow Test', () => {
     cy.get('[data-testid="home-page"]').should('be.visible');
   });
   
-  it('should handle API errors with toast notifications', () => {
-    // Intercept the API call and force it to fail in a way that your app will recognize
-    cy.intercept('GET', '**/api/user-data', {
-      statusCode: 500,
-      body: { message: 'Server Error' },  // Match the structure your app expects
-      delay: 1000,
-      forceNetworkError: false  // Don't force a network error, use status code instead
-    }).as('apiError');
-    
-    // Clear any existing toasts
-    cy.wait(5000);
-    
-    // Click reload button to trigger the error
-    cy.get('[data-testid="reload-button"]').click();
-    
-    // Verify button is disabled during loading
-    cy.get('[data-testid="reload-button"]').should('be.disabled');
-    
-    // Wait for the API error request to complete
-    cy.wait('@apiError');
-    
-    // Wait for the error to be processed and displayed
-    // First ensure the button returns to normal state
-    cy.get('[data-testid="reload-button"]', { timeout: 10000 })
-      .should('not.be.disabled');
-    
-    // Check for the actual error element if it exists
-    cy.get('body').then($body => {
-      if ($body.find('[data-testid="error-message"]').length > 0) {
-        cy.get('[data-testid="error-message"]').should('be.visible');
-        cy.get('[data-testid="error-message"]').should('contain.text', 'Error');
-      }
-    });
-  });
-  
   it('should show tooltip on profile hover', () => {
     // Hover over profile image
     cy.get('[data-testid="profile-image"]').trigger('mouseenter');
@@ -220,7 +141,6 @@ describe('User Flow Test', () => {
     cy.get('[data-testid="role-badge-none"]').should('be.visible');
   });
   
-  // Update this test - verify experiments link is NOT visible in mobile view
   it('should test responsive behavior', () => {
     // Set viewport to mobile size
     cy.viewport('iphone-x');
