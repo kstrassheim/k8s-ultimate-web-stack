@@ -8,7 +8,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const isWindows = process.platform === 'win32';
-const backendPath = path.resolve(__dirname, '../backend');
+// This script lives at the repo root, so backend/ is a sibling directory.
+const backendPath = path.resolve(__dirname, 'backend');
 
 // Use the Python from the activated venv if it exists, otherwise fall back to system python3
 // When CI runs "source venv/bin/activate" the VIRTUAL_ENV env var is set

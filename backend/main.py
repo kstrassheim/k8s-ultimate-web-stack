@@ -85,22 +85,17 @@ async def frontend_handler(path: str):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="API path not found")
 
-    # Disallow path traversal sequences to prevent reading files outside dist
-    if ".." in path:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=404, detail="Invalid path")
+    index_html = dist / "index.html"
+    fp = index_html
 
-    fp = dist / path
-    # Ensure the resolved path is still within dist (defense in depth)
-    try:
-        fp = fp.resolve()
-        if not str(fp).startswith(str(dist)):
-            fp = dist / "index.html"
-    except (OSError, RuntimeError):
-        fp = dist / "index.html"
-
-    if path == "" or not fp.exists():
-        fp = dist / "index.html"
+    if path and ".." not in path and "\x00" not in path:
+        candidate = (dist / path).resolve()
+        try:
+            candidate.relative_to(dist)
+        except ValueError:
+            candidate = None
+        if candidate is not None and candidate.is_file():
+            fp = candidate
 
     media_type = None
     if path.endswith(".js"):
