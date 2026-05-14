@@ -1,3 +1,4 @@
+import psutil
 from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -57,7 +58,7 @@ except Exception as e:
 @app.get("/health")
 @app.head("/health")
 async def health():
-    boot_time = datetime.datetime.fromtimestamp(__import__("psutil").boot_time())
+    boot_time = datetime.datetime.fromtimestamp(psutil.boot_time())
     uptime = datetime.datetime.now() - boot_time
     cpu_percent = __import__("psutil").cpu_percent(interval=1)
     memory_info = __import__("psutil").virtual_memory()
