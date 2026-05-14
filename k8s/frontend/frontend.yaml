@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: mainpi.local:30500/future-gadget-dev/frontend:latest
+          image: future-gadget-dev/frontend:latest
           ports:
             - containerPort: 80
               name: http
