@@ -149,7 +149,7 @@ export default defineConfig({
       include: 'src/*',
       exclude: ['node_modules', 'test/'],
       extension: ['.js', '.jsx'],
-      requireEnv: false,
+      requireEnv: true,
     })
   ],
   base: "/",
