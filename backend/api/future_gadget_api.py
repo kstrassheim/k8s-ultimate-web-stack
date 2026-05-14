@@ -160,6 +160,7 @@ async def get_worldline_status():
     return calculate_worldline_status(experiments, readings)
 
 @future_gadget_api_router.get("/worldline/history", response_model=List[Dict])
+@future_gadget_api_router.get("/worldline-history", response_model=List[Dict])
 async def get_worldline_history():
     """Return a history of worldline readings based on experiments and readings."""
     experiments = fgl_service.get_all_experiments()

@@ -14,8 +14,9 @@ venv/
 node_modules/
 npm-debug.log*
 .DS_Store
-cypress/videos/
-cypress/screenshots/
+**/cypress/videos/
+**/cypress/screenshots/
+**/cypress/downloads/
 .nyc_output/
 coverage/
 *.tfstate
