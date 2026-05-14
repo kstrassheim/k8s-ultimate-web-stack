@@ -36,28 +36,12 @@ export default defineConfig({
         }
       });
       
-      setupNodeEvents(on, config) {
-      on('after:spec', (spec, results) => {
-        // If the spec has a video and none of the tests failed
-        if (results && results.video && !results.tests.some(test => test.state === 'failed')) {
-          console.log(`Deleting video for passing spec: ${spec.name}`);
-          
-          // Delete the video file
-          try {
-            fs.unlinkSync(results.video);
-          } catch (error) {
-            console.error('Error deleting video:', error);
-          }
-        }
-      });
-      
-      // Use the imported task directly (no custom coverageReport needed)
+      // Use the imported task directly (no custom coverageReport task)
       // @cypress/code-coverage handles coverage collection via after:spec/after:run hooks
       // Coverage report is generated separately in CI via `npm run coverage:report:no-check`
       codeCoverageTask(on, config);
       
       return config;
-    }
     }
   }
 });
