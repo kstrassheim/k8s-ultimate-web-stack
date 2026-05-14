@@ -460,6 +460,12 @@ export class PublicClientApplication {
   }
   
   initialize() {
+    // Re-evaluate MOCKROLE now that localStorage may have been set by tests.
+    // The constructor ran before cy.setMockRole() was called, so activeAccountIndex
+    // may be wrong (defaulted to index 0). Re-read from localStorage to fix it.
+    this.activeAccountIndex = this._getInitialActiveAccountIndex();
+    this.accounts = [this._allAccounts[this.activeAccountIndex]];
+    this._persistActiveAccount(this.accounts[0]);
     return Promise.resolve();
   }
   
