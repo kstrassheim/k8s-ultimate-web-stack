@@ -198,18 +198,13 @@ describe('Dashboard Page Features', () => {
   it('should handle API errors gracefully', () => {
     // Reload data and verify the page handles the response without crashing.
     // No error injection via intercepts per issue requirement.
+    // Retry-aware check (no hard wait) so we catch the toast before notyf's
+    // 1s auto-dismiss closes it. Match any success-or-error state element.
     cy.get('[data-testid="reload-button"]').click();
-    cy.wait(2000);
-
-    // Verify UI shows either success OR error state (page didn't crash)
-    cy.get('body').then($body => {
-      const errorSelectors = ['.notyf__toast--error', '[data-testid*="error"]', '.alert-danger'];
-      const successSelectors = ['.notyf__toast--success'];
-      const hasError = errorSelectors.some(s => $body.find(s).length > 0);
-      const hasSuccess = successSelectors.some(s => $body.find(s).length > 0);
-      // Pass if either error OR success state is shown
-      expect(hasError || hasSuccess).to.be.true;
-    });
+    cy.get(
+      '.notyf__toast--success, .notyf__toast--error, [data-testid*="error"], .alert-danger',
+      { timeout: 10000 }
+    ).should('exist');
 
     // WorldlineMonitor should remain visible after reload
     cy.get('[data-testid="worldline-monitor"]').should('be.visible');

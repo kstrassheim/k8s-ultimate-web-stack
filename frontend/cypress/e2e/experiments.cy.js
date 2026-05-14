@@ -242,14 +242,13 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
   });
   
   it('should handle reload button correctly', () => {
-    // Use a simple intercept with inline data instead of a fixture
-    // Click reload button - let it make a real API call to the mock backend
+    // Click reload button - let it make a real API call to the mock backend.
+    // Retry-aware check (no hard wait): notyf toast auto-dismisses after 1s,
+    // so we must assert immediately after the click and let Cypress poll.
     cy.get('[data-testid="reload-experiments-btn"]').click();
-    cy.wait(2000);
-
-    // Verify success toast appears after reload completes
-    cy.get('.notyf__toast--success').should('be.visible');
-    cy.get('.notyf__toast--success').should('contain.text', 'Experiments loaded successfully');
+    cy.get('.notyf__toast--success', { timeout: 10000 })
+      .should('be.visible')
+      .and('contain.text', 'Experiments loaded successfully');
 
     // Verify the world line change values from the mock backend are displayed
     cy.get('[data-testid="experiments-table"]').should('be.visible');
@@ -257,18 +256,14 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
   });
   
   it('should handle error scenarios gracefully', () => {
-    // Intercept the API call and force an error
-    // Click reload button - the mock backend will return real data
+    // Click reload button - mock backend returns real data.
+    // Retry-aware check (no hard wait): notyf toast auto-dismisses after 1s,
+    // so a fixed cy.wait would miss it. Cypress's should() polls until visible.
     cy.get('[data-testid="reload-experiments-btn"]').click();
-    cy.wait(2000);
-
-    // Verify either success toast OR error state (no error injection per issue requirement)
-    cy.get('body').then($body => {
-      const hasError = $body.find('.notyf__toast--error, [data-testid="experiments-error"]').length > 0;
-      const hasSuccess = $body.find('.notyf__toast--success').length > 0;
-      // Pass if backend returns either success or graceful error handling
-      expect(hasError || hasSuccess).to.be.true;
-    });
+    cy.get(
+      '.notyf__toast--success, .notyf__toast--error, [data-testid="experiments-error"]',
+      { timeout: 10000 }
+    ).should('exist');
 
     // Verify experiments table or error state is visible
     cy.get('[data-testid="experiments-table"], [data-testid="experiments-error"]').should('be.visible');

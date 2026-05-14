@@ -4,7 +4,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pathlib import Path
 import datetime
-import os
 
 from os import environ as os_environ
 from dotenv import load_dotenv
@@ -79,7 +78,24 @@ async def health():
 dist = Path("./dist").resolve()
 frontend_router = APIRouter()
 
-_dist_str = str(dist)
+
+def _enumerate_dist_files(root: Path) -> dict:
+    """At startup, walk dist/ and map each relative path string to its absolute
+    Path. The handler only serves files from this map — turning user input
+    into a dict key lookup rather than a filesystem path construction.
+    This is the canonical whitelist sanitizer for path-traversal."""
+    out = {}
+    if not root.is_dir():
+        return out
+    for p in root.rglob("*"):
+        if p.is_file():
+            rel = p.relative_to(root).as_posix()
+            out[rel] = p
+    return out
+
+
+_dist_files = _enumerate_dist_files(dist)
+_index_html = dist / "index.html"
 
 
 @frontend_router.get("/{path:path}")
@@ -88,18 +104,10 @@ async def frontend_handler(path: str):
         from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="API path not found")
 
-    index_html = dist / "index.html"
-    fp = index_html
-
-    if path and "\x00" not in path and not os.path.isabs(path):
-        try:
-            target = os.path.realpath(os.path.join(_dist_str, path))
-            if os.path.commonpath([_dist_str, target]) == _dist_str:
-                target_path = Path(target)
-                if target_path.is_file():
-                    fp = target_path
-        except (ValueError, OSError):
-            pass
+    # Whitelist lookup: user input is only used as a dict key. The served path
+    # is taken from the dict value, which was constructed at startup from
+    # trusted filesystem enumeration — not from user input.
+    fp = _dist_files.get(path, _index_html)
 
     media_type = None
     if path.endswith(".js"):
