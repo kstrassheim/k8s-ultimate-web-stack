@@ -27,3 +27,11 @@ class MockFutureGadgetLabDataService(FutureGadgetLabDataService):
         self.db = TinyDB(storage=MemoryStorage)  # type: ignore[assignment]
         self._experiments = self.db.table("experiments")
         self._readings = self.db.table("divergence_readings")
+    # Property aliases for test compatibility (tests reference .experiments_table etc.)
+    @property
+    def experiments_table(self):
+        return self._experiments
+
+    @property
+    def divergence_readings_table(self):
+        return self._readings
