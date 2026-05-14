@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Optional, Union
-
+from typing import Optional
 from tinydb import TinyDB
 from tinydb.storages import MemoryStorage
 
 from common.log import logger
-from db.future_gadget_lab_data_service import FutureGadgetLabDataService, _DEFAULT_PARTITION_KEY_PATH
+from db.future_gadget_lab_data_service import FutureGadgetLabDataService
 
 
 class MockFutureGadgetLabDataService(FutureGadgetLabDataService):
@@ -17,24 +15,15 @@ class MockFutureGadgetLabDataService(FutureGadgetLabDataService):
 
     def __init__(
         self,
-        db_path: Optional[Union[str, Path]] = None,
-        cosmos_account_uri: Optional[str] = None,
-        cosmos_database: Optional[str] = None,
-        cosmos_container: Optional[str] = None,
-        cosmos_partition_key: str = _DEFAULT_PARTITION_KEY_PATH,
-        credential: Optional[Any] = None,
+        mongodb_uri: Optional[str] = None,
+        mongodb_db: Optional[str] = None,
     ) -> None:
-        super().__init__(
-            db_path=db_path,
-            cosmos_account_uri=cosmos_account_uri,
-            cosmos_database=cosmos_database,
-            cosmos_container=cosmos_container,
-            cosmos_partition_key=cosmos_partition_key,
-            credential=credential,
-        )
+        # Pass None for mongodb_uri to force tinydb fallback
+        super().__init__(mongodb_uri=None, mongodb_db=None)
 
     def _initialize_db(self) -> None:  # type: ignore[override]
         logger.info("Using in-memory TinyDB storage for MockFutureGadgetLabDataService")
         self.storage_backend = "tinydb"
         self.db = TinyDB(storage=MemoryStorage)  # type: ignore[assignment]
-        self._initialize_tinydb_tables()
+        self._experiments = self.db.table("experiments")
+        self._readings = self.db.table("divergence_readings")
