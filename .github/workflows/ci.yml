@@ -44,12 +44,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install build tools + python3
+        run: |
+          apk add --no-cache gcc musl-dev linux-headers python3 py3-pip
+
       - name: Install backend dependencies
         run: |
-          apk add --no-cache gcc musl-dev linux-headers
           cd backend
           pip install --upgrade pip
           pip install -r requirements.txt
+          # Copy mock terraform config for MOCK=true test runs
+          cp -n mock/terraform.mock.config.json terraform.config.json 2>/dev/null || true
 
       - name: Run pytest with coverage
         run: |
@@ -123,6 +128,8 @@ jobs:
           python -m venv venv
           source venv/bin/activate
           pip install -r requirements.txt
+          # Copy mock terraform config for MOCK=true test runs
+          cp -n mock/terraform.mock.config.json terraform.config.json 2>/dev/null || true
           # Mock MongoDB URI for CI tests
           echo "MONGODB_URI=mongodb://localhost:27017" >> $GITHUB_ENV
 
