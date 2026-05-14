@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
         - name: backend
-          image: mainpi.local:30500/future-gadget-dev/backend:latest
+          image: future-gadget-dev/backend:latest
           ports:
             - containerPort: 8000
               name: http

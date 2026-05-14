@@ -16,7 +16,7 @@ This is not a reimplementation of the application logic — the app code is iden
 | **IaC** | Terraform provisions everything | Terraform handles App Reg only; k8s manifests handle runtime infra |
 | **Deployment method** | `az webapp up` / CI → Azure | ArgoCD app-of-apps → k8s cluster |
 | **Environments** | dev / test / prod (Azure App Service slots) | dev / test / prod (k8s namespaces, kustomize overlays) |
-| **Container registry** | Azure Container Apps registry | Self-hosted `mainpi.local:30500` registry on Orange Pi |
+| **Container registry** | Azure Container Apps registry | Self-hosted container registry |
 
 ## Architecture
 
@@ -78,7 +78,7 @@ k8s-ultimate-web-stack/
 - **Self-hosted k8s** cluster (Orange Pi + OpenClaw)
 - **kubectl** configured for the cluster
 - **ArgoCD** installed in-cluster
-- **Container registry** at `mainpi.local:30500`
+- **Container registry** — self-hosted registry
 - **Entra ID** tenant (for App Reg — same as ultimate-web-stack)
 - **Terraform** (for App Reg provisioning only)
 
@@ -100,13 +100,13 @@ This creates the App Registration in Entra ID. The app code (backend/frontend) r
 ```bash
 # Backend
 cd backend
-docker build -t mainpi.local:30500/future-gadget-dev/backend:latest .
-docker push mainpi.local:30500/future-gadget-dev/backend:latest
+docker build -t <registry>/future-gadget-dev/backend:latest .
+docker push <registry>/future-gadget-dev/backend:latest
 
 # Frontend
 cd frontend
-docker build -t mainpi.local:30500/future-gadget-dev/frontend:latest .
-docker push mainpi.local:30500/future-gadget-dev/frontend:latest
+docker build -t <registry>/future-gadget-dev/frontend:latest .
+docker push <registry>/future-gadget-dev/frontend:latest
 ```
 
 ### 3. Apply k8s manifests directly (one-shot)
@@ -174,7 +174,7 @@ CI runs on every push to `main` / `prod` and on all PRs via `.github/workflows/c
 
 ## Secrets
 
-No raw Secrets in git. Credentials are managed via the **Sealed Secrets** pattern from [k8s-openclaw](https://github.com/kstrassheim/k8s-openclaw):
+No raw Secrets in git. Credentials are managed via the **Sealed Secrets** pattern:
 
 1. Create a Secret manually once: `kubectl create secret generic my-secret --dry-run=client -o yaml`
 2. Seal it: `kubeseal -o yaml > sealed-secret.yaml`
@@ -189,7 +189,7 @@ MongoDB connection uses the Kubernetes-internal Service DNS (`mongodb://mongodb:
 - **MongoDB replaces CosmosDB** — same pymongo API, connection URI differs
 - **OpenTelemetry replaces App Insights** — same structured logging, different exporter
 - **ArgoCD replaces Azure App Service deployments** — GitOps sync instead of `az webapp up`
-- **Self-signed registry** (`mainpi.local:30500`) — push with `--insecure` flag for Docker/Podman
+- **Self-hosted registry** — push with `--insecure` flag for Docker/Podman
 
 ## Reference
 
