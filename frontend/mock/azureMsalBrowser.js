@@ -465,6 +465,9 @@ export class PublicClientApplication {
     // may be wrong (defaulted to index 0). Re-read from localStorage to fix it.
     this.activeAccountIndex = this._getInitialActiveAccountIndex();
     this.accounts = [this._allAccounts[this.activeAccountIndex]];
+    // Persist auth state so getAllAccounts() returns this account after initialization
+    this._persistAuthState(true);
+    this._persistActiveAccount(this.accounts[0]);
     return Promise.resolve();
   }
   
