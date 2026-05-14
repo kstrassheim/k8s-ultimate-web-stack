@@ -1,0 +1,14 @@
+# ==============================
+# DEV environment
+# ==============================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: future-gadget-dev
+
+commonLabels:
+  app.kubernetes.io/environment: dev
+
+patches:
+  - path: ../../patches/dev-backend-env.yaml
+  - path: ../../patches/dev-frontend-env.yaml

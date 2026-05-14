@@ -1,0 +1,14 @@
+# ==============================
+# TEST environment
+# ==============================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: future-gadget-test
+
+commonLabels:
+  app.kubernetes.io/environment: test
+
+patches:
+  - path: ../../patches/test-backend-env.yaml
+  - path: ../../patches/test-frontend-env.yaml

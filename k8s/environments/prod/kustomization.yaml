@@ -1,0 +1,14 @@
+# ==============================
+# PROD environment
+# ==============================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: future-gadget
+
+commonLabels:
+  app.kubernetes.io/environment: prod
+
+patches:
+  - path: ../../patches/prod-backend-env.yaml
+  - path: ../../patches/prod-frontend-env.yaml

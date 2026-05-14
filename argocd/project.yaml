@@ -1,0 +1,30 @@
+# ==============================
+# ArgoCD Project
+# ==============================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: future-gadget
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Future Gadget Lab on local k8s cluster
+  sourceRepos:
+    - https://github.com/kstrassheim/k8s-ultimate-web-stack.git
+    - https://github.com/kstrassheim/k8s-ultimate-web-stack
+  destinations:
+    - namespace: future-gadget-dev
+      server: https://kubernetes.default.svc
+    - namespace: future-gadget-test
+      server: https://kubernetes.default.svc
+    - namespace: future-gadget
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

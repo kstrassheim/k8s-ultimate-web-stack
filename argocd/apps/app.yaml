@@ -1,0 +1,79 @@
+# ==============================
+# ArgoCD Apps — dev / test / prod
+# ==============================
+
+---
+# DEV — syncs from main branch
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: future-gadget-dev
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: future-gadget
+  source:
+    repoURL: https://github.com/kstrassheim/k8s-ultimate-web-stack.git
+    targetRevision: main
+    path: k8s/environments/dev
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: future-gadget-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+
+---
+# TEST — syncs from prod branch
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: future-gadget-test
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: future-gadget
+  source:
+    repoURL: https://github.com/kstrassheim/k8s-ultimate-web-stack.git
+    targetRevision: prod
+    path: k8s/environments/test
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: future-gadget-test
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
+
+---
+# PROD — syncs from prod branch tags
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: future-gadget
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: future-gadget
+  source:
+    repoURL: https://github.com/kstrassheim/k8s-ultimate-web-stack.git
+    targetRevision: prod
+    path: k8s/environments/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: future-gadget
+  syncPolicy:
+    automated: {}
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
