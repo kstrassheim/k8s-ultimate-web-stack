@@ -194,4 +194,3 @@ MongoDB connection uses the Kubernetes-internal Service DNS (`mongodb://mongodb:
 ## Reference
 
 - Parent project: [ultimate-web-stack](https://github.com/kstrassheim/ultimate-web-stack)
-- Cluster management: [k8s-openclaw](https://github.com/kstrassheim/k8s-openclaw)
