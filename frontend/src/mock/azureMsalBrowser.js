@@ -460,10 +460,11 @@ export class PublicClientApplication {
   }
   
   initialize() {
-    // After initialization completes, hydrate auth state from localStorage.
-    // This ensures the account is restored when MOCKROLE is set before
-    // the app initializes (as happens in Cypress beforeEach).
+    // After initialization completes, re-evaluate activeAccountIndex from MOCKROLE
+    // (constructor ran before cy.setMockRole() was called in Cypress beforeEach).
+    // Then hydrate auth state so the correct account is active.
     return Promise.resolve().then(() => {
+      this.activeAccountIndex = this._getInitialActiveAccountIndex();
       this._hydrateAuthenticationState();
     });
   }
