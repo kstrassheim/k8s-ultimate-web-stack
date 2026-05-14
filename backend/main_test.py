@@ -128,36 +128,16 @@ class TestMainModule:
     
     def test_frontend_handler_fallback_to_index(self, mock_file_response):
         """Test the frontend handler falls back to index.html when path doesn't exist"""
-        # Instead of mocking Path globally, we'll mock dist directly
-        with patch('main.dist') as mock_dist:
-            # Create a more sophisticated tracking mechanism
-            path_requests = []
-            
-            def path_div_tracker(path_str):
-                path_requests.append(path_str)
-                result = MagicMock()
-                # Make nonexistent-path not exist, but index.html exist
-                if path_str == 'nonexistent-path':
-                    result.exists.return_value = False
-                else:
-                    result.exists.return_value = True
-                return result
-                
-            # Set up the side effect
-            mock_dist.__truediv__.side_effect = path_div_tracker
-            
-            # Make the request to the handler
-            response = client.get("/nonexistent-path")
-            
-            # Debug output
-            print(f"Path requests: {path_requests}")
-            
-            # Since path_requests is working correctly, assert on that
-            assert 'nonexistent-path' in path_requests, "Should have checked nonexistent-path"
-            assert 'index.html' in path_requests, "Should have fallen back to index.html"
-            
-            # Also verify FileResponse was called (don't assert on its arguments)
-            mock_file_response.assert_called()
+        # Request a path that definitely doesn't exist under dist/
+        response = client.get("/this-file-does-not-exist-12345.xyz")
+
+        # FileResponse must be called with the index.html fallback
+        mock_file_response.assert_called_once()
+        args, _ = mock_file_response.call_args
+        served_path = str(args[0]) if args else ""
+        assert served_path.endswith("index.html"), (
+            f"Should have fallen back to index.html, got: {served_path}"
+        )
     
     def test_cors_middleware_configuration(self):
         """Test that CORS middleware is configured"""

@@ -79,6 +79,9 @@ async def health():
 dist = Path("./dist").resolve()
 frontend_router = APIRouter()
 
+_dist_str = str(dist)
+
+
 @frontend_router.get("/{path:path}")
 async def frontend_handler(path: str):
     if path.startswith("api/") or path.startswith("future-gadget-lab/"):
@@ -88,14 +91,15 @@ async def frontend_handler(path: str):
     index_html = dist / "index.html"
     fp = index_html
 
-    if path and ".." not in path and "\x00" not in path:
-        candidate = (dist / path).resolve()
+    if path and "\x00" not in path and not os.path.isabs(path):
         try:
-            candidate.relative_to(dist)
-        except ValueError:
-            candidate = None
-        if candidate is not None and candidate.is_file():
-            fp = candidate
+            target = os.path.realpath(os.path.join(_dist_str, path))
+            if os.path.commonpath([_dist_str, target]) == _dist_str:
+                target_path = Path(target)
+                if target_path.is_file():
+                    fp = target_path
+        except (ValueError, OSError):
+            pass
 
     media_type = None
     if path.endswith(".js"):
