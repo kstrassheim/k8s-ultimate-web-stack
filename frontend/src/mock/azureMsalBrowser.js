@@ -460,7 +460,12 @@ export class PublicClientApplication {
   }
   
   initialize() {
-    return Promise.resolve();
+    // After initialization completes, hydrate auth state from localStorage.
+    // This ensures the account is restored when MOCKROLE is set before
+    // the app initializes (as happens in Cypress beforeEach).
+    return Promise.resolve().then(() => {
+      this._hydrateAuthenticationState();
+    });
   }
   
   setNavigationClient() {}

@@ -148,10 +148,52 @@ async def create_divergence_reading(reading: DivergenceReadingCreate):
     return fgl_service.create_divergence_reading(reading.model_dump())
 
 @future_gadget_api_router.get("/worldline/status", response_model=Dict)
+@future_gadget_api_router.get("/worldline-status", response_model=Dict)
 async def get_worldline_status():
     experiments = fgl_service.get_all_experiments()
     readings = fgl_service.get_all_divergence_readings()
     return calculate_worldline_status(experiments, readings)
+
+@future_gadget_api_router.get("/worldline/history", response_model=List[Dict])
+async def get_worldline_history():
+    """Return a history of worldline readings based on experiments and readings."""
+    experiments = fgl_service.get_all_experiments()
+    readings = fgl_service.get_all_divergence_readings()
+    history = []
+    base = 1.0
+    # Sort experiments by timestamp to build chronological history
+    sorted_exps = sorted(
+        [e for e in experiments if e.get("timestamp")],
+        key=lambda x: x.get("timestamp", "")
+    )
+    for exp in sorted_exps:
+        change = exp.get("world_line_change", 0.0) or 0.0
+        base += change
+        history.append({
+            "current_worldline": round(base, 6),
+            "timestamp": exp.get("timestamp"),
+            "experiment_name": exp.get("name", "Unknown"),
+            "status": exp.get("status", "unknown"),
+        })
+    # Add readings-based history entries too
+    seen_timestamps = set(e.get("timestamp") for e in sorted_exps)
+    for reading in readings:
+        ts = reading.get("timestamp") or reading.get("created_at")
+        if ts and ts not in seen_timestamps:
+            reading_val = reading.get("reading") or reading.get("value") or 0.0
+            if isinstance(reading_val, str):
+                try:
+                    reading_val = float(reading_val)
+                except ValueError:
+                    reading_val = 0.0
+            history.append({
+                "current_worldline": round(reading_val, 6),
+                "timestamp": ts,
+                "recorded_by": reading.get("recorded_by", "System"),
+                "status": reading.get("status", "reading"),
+            })
+    history.sort(key=lambda x: x.get("timestamp", ""))
+    return history
 
 # --- WebSocket Endpoints ---
 
