@@ -155,7 +155,8 @@ jobs:
           cd backend
           source venv/bin/activate
           # Start backend in mock mode without debugpy (faster startup for CI)
-          MOCK=true ENABLE_DEBUG=false node start-backend.js &
+          # start-backend.js is at the repo root, not inside backend/, so use ../start-backend.js
+          MOCK=true ENABLE_DEBUG=false node ../start-backend.js &
           BACKEND_PID=$!
           echo "Backend PID: $BACKEND_PID"
           # Wait for backend to be healthy
