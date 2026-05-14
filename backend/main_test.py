@@ -175,23 +175,19 @@ class TestMainModule:
         # Verify at minimum that credentials are allowed, which indicates CORS is enabled
         assert response.headers.get("access-control-allow-credentials") == "true"
     
-    @patch('main.FastAPIMiddleware')
-    def test_opencensus_middleware_configuration(self, mock_middleware):
-        """Test that OpenCensus middleware is configured with the exporter"""
-        # This is a bit tricky to test directly. We'll check that the app has middleware
-        # instead of mocking the middleware creation.
-        
+    def test_opentelemetry_middleware_configuration(self, mock_middleware):
+        """Test that OpenTelemetry middleware is configured with the FastAPIInstrumentor"""
         # Check that app has middleware
         assert len(app.user_middleware) > 0
         
-        # Find the OpenCensus middleware
-        found_opencensus = False
+        # Find the FastAPIMiddleware (OpenTelemetry instruments via this)
+        found_otel = False
         for middleware in app.user_middleware:
             if "FastAPIMiddleware" in str(middleware.cls):
-                found_opencensus = True
+                found_otel = True
                 break
         
-        assert found_opencensus, "OpenCensus middleware not found in app middleware"
+        assert found_otel, "OpenTelemetry FastAPIMiddleware not found in app middleware"
 
     def test_api_router_is_included(self):
         """Test that the API router is included at the correct prefix"""
