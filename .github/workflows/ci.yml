@@ -1,0 +1,243 @@
+name: CI / Tests
+
+on:
+  push:
+    branches:
+      - main
+      - prod
+  pull_request:
+    branches:
+      - main
+      - prod
+
+jobs:
+  codeql-analysis:
+    name: CodeQL Security Scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      actions: read
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: python, javascript
+          queries: security-extended
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:python,javascript"
+
+  backend-unit-tests:
+    runs-on: ubuntu-latest
+    container: python:3.12-alpine
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools + python3
+        run: |
+          apk add --no-cache gcc musl-dev linux-headers python3 py3-pip
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          # Copy mock terraform config for MOCK=true test runs
+          cp -n mock/terraform.mock.config.json terraform.config.json 2>/dev/null || true
+
+      - name: Run pytest with coverage
+        run: |
+          cd backend
+          pytest --cov=. --cov-report=xml --cov-report=html
+
+      - name: Upload test coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-coverage
+          path: backend/htmlcov
+          if-no-files-found: ignore
+
+  frontend-unit-tests:
+    runs-on: ubuntu-latest
+    container: node:22-alpine
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: apk add --no-cache python3 make g++ git bash
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm config set fetch-retries 5
+          npm config set fetch-retry-maxtimeout 60000
+          npm ci || npm install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run Jest tests
+        run: |
+          cd frontend
+          npm run test:coverage
+
+      - name: Upload test coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jest-coverage
+          path: frontend/coverage/lcov-report
+          if-no-files-found: ignore
+
+  e2e-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: 'backend/requirements.txt'
+
+      - name: Install backend dependencies
+        run: |
+          cd backend
+          python -m pip install --upgrade pip
+          python -m venv venv
+          source venv/bin/activate
+          pip install -r requirements.txt
+          # Copy mock terraform config for MOCK=true test runs
+          cp -n mock/terraform.mock.config.json terraform.config.json 2>/dev/null || true
+          # Use MOCK mode so no real MongoDB is needed
+          echo "MOCK=true" >> $GITHUB_ENV
+
+      - name: Install frontend dependencies
+        run: |
+          cd frontend
+          npm config set fetch-retries 5
+          npm ci || npm install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install browser dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk2.0-0 libgtk-3-0 libgbm-dev libnotify-dev libnss3 \
+            libxss1 libasound2-dev libxtst6 xauth xvfb fonts-liberation \
+            libappindicator3-1 libatk-bridge2.0-0 libatk1.0-0 libcups2 \
+            libdbus-1-3 libnspr4 libu2f-udev libvulkan1
+
+      - name: Start backend (mock mode, no debug)
+        run: |
+          cd backend
+          source venv/bin/activate
+          # Start backend in mock mode without debugpy (faster startup for CI)
+          # start-backend.js is at the repo root, not inside backend/, so use ../start-backend.js
+          MOCK=true ENABLE_DEBUG=false node ../start-backend.js &
+          BACKEND_PID=$!
+          echo "Backend PID: $BACKEND_PID"
+          # Wait for backend to be healthy
+          for i in {1..30}; do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "Backend is healthy"
+              break
+            fi
+            echo "Waiting for backend to start... ($i/30)"
+            sleep 2
+          done
+          # Persist PID for later cleanup
+          echo "BACKEND_PID=$BACKEND_PID" >> $GITHUB_ENV
+
+      - name: Start frontend (mock mode)
+        run: |
+          cd frontend
+          # Start frontend in mock mode - serves at port 5173
+          # npm_config_mock=true is already set in the job env
+          npm run test:frontend &
+          FRONTEND_PID=$!
+          echo "Frontend PID: $FRONTEND_PID"
+          # Wait for frontend to be healthy
+          for i in {1..30}; do
+            if curl -sf http://localhost:5173 > /dev/null 2>&1; then
+              echo "Frontend is healthy"
+              break
+            fi
+            echo "Waiting for frontend to start... ($i/30)"
+            sleep 2
+          done
+          echo "FRONTEND_PID=$FRONTEND_PID" >> $GITHUB_ENV
+
+      - name: Run E2E Tests (Cypress directly, no server spawning)
+        env:
+          npm_config_mock: 'true'
+        run: |
+          cd frontend
+          # Run Cypress directly - backend is already running in the background
+          # Do NOT use test:e2e:coverage (it spawns its own backend causing EADDRINUSE)
+          npx cypress run --browser chrome --env coverage=true
+          mkdir -p .nyc_output
+          if [ "$(find .nyc_output -name '*.json' | wc -l)" -eq 0 ]; then
+            echo '{}' > .nyc_output/coverage-placeholder.json
+          fi
+          npm run coverage:report:no-check
+
+      - name: Stop frontend
+        if: always()
+        run: |
+          if [ -n "$FRONTEND_PID" ]; then
+            kill $FRONTEND_PID 2>/dev/null || true
+          fi
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -n "$BACKEND_PID" ]; then
+            kill $BACKEND_PID 2>/dev/null || true
+          fi
+
+      - name: Upload Cypress screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-screenshots
+          path: frontend/cypress/screenshots
+          if-no-files-found: ignore
+
+      - name: Upload test videos
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cypress-videos
+          path: frontend/cypress/videos
+          if-no-files-found: ignore
+
+      - name: Upload E2E coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-coverage-report
+          path: frontend/coverage/lcov-report
+          if-no-files-found: warn

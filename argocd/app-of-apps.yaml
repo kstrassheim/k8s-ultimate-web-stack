@@ -1,0 +1,27 @@
+# ==============================
+# ArgoCD App-of-Apps bootstrap
+# ==============================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: future-gadget-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: future-gadget
+  source:
+    repoURL: https://github.com/kstrassheim/k8s-ultimate-web-stack.git
+    targetRevision: main
+    path: argocd/apps
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
