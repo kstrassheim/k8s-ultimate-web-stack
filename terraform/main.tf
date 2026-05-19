@@ -24,7 +24,7 @@ provider "azurerm" {
 
 variable app_name {
   description = "Base name for all resources"
-  default     = "ultimate-web-stack"
+  default     = "k8s-ultimate-web-stack"
   type        = string
 }
 
