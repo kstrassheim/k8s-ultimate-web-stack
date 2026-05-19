@@ -22,7 +22,6 @@ jobs:
     permissions:
       id-token: write
       contents: read
-      pull-requests: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,69 +49,42 @@ jobs:
 
       - name: Terraform Plan
         working-directory: terraform
-        run: |
-          terraform plan -out=tfplan -no-color
-          terraform show -no-color tfplan > plan.txt
+        id: plan
+        run: terraform plan -out=tfplan
 
-      - name: Upload Terraform Plan artifact
+      - name: Comment Plan Output on PR
         if: github.event_name == 'pull_request'
+        working-directory: terraform
+        run: |
+          terraform show tfplan > tfplan.txt
+          comment_header="#### :hammer: Terraform Plan Summary\n\nPR: \`${{ github.event.pull_request.html_url }}\`\nEnvironment: \`${{ github.ref_name }}\`\n"
+          echo -e "$comment_header" > comment.txt
+          echo '```terraform' >> comment.txt
+          cat tfplan.txt >> comment.txt
+          echo '```' >> comment.txt
+          gh pr comment ${{ github.event.pull_request.number }} --body-file comment.txt
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Plan Artifact
+        if: github.event_name == 'pull_request'
+        working-directory: terraform
         uses: actions/upload-artifact@v4
         with:
-          name: terraform-plan
-          path: terraform/plan.txt
-          retention-days: 5
-
-      - name: Comment Terraform Plan on PR
-        if: github.event_name == 'pull_request'
-        run: |
-          python3 << 'PYEOF'
-          import os
-          import json
-          import subprocess
-
-          with open("terraform/plan.txt", "r") as f:
-            plan_content = f.read()
-
-          # Trim if too long for GitHub comment (65536 char limit, keep 5000 buffer)
-          if len(plan_content) > 60000:
-            plan_content = plan_content[:59500] + "\n... (trimmed - see artifact for full plan)"
-
-          plan_escaped = json.dumps(plan_content)[1:-1]  # remove outer quotes from json.dumps
-
-          pr_number = os.environ["PR_NUMBER"]
-          body = f"""## Terraform Plan :rocket:
-
-<details>
-<summary>Click to expand full plan</summary>
-
-```terraform
-{plan_escaped}
-```
-
-</details>"""
-
-          result = subprocess.run(
-            ["gh", "pr", "comment", pr_number, "--body", body],
-            capture_output=True, text=True
-          )
-          if result.returncode != 0:
-            print(f"Error posting comment: {result.stderr}")
-            raise SystemExit(1)
-          print("Comment posted successfully")
-          PYEOF
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          GH_TOKEN: ${{ github.token }}
+          name: tfplan-${{ github.ref_name }}
+          path: terraform/tfplan
+          retention-days: 1
 
       - name: Terraform Apply
-        if: github.event_name == 'push'
+        if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod' || github.event_name == 'workflow_dispatch'
         working-directory: terraform
-        run: terraform apply -auto-approve -no-color tfplan
+        run: terraform apply -auto-approve tfplan
 
       - name: Upload Terraform Output
-        if: github.ref == 'refs/heads/prod' || github.event_name == 'workflow_dispatch'
+        if: github.ref == 'refs/heads/prod'
         working-directory: terraform
-        run: terraform output -json > terraform_output.json
+        run: |
+          terraform output -json > terraform_output.json
         uses: actions/upload-artifact@v4
         with:
           name: terraform-config
