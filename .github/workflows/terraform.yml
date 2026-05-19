@@ -14,14 +14,22 @@ on:
       - prod
     paths:
       - terraform/**
+  workflow_run:
+    workflows: ["CI / Tests"]
+    types: [completed]
+    branches:
+      - main
+      - prod
   workflow_dispatch:
 
 jobs:
-  terraform:
+  terraform-plan:
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
+    outputs:
+      plan_exists: ${{ steps.plan.outputs.plan_exists }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -48,11 +56,70 @@ jobs:
           terraform init -backend-config="key=app-reg.tfstate"
 
       - name: Terraform Plan
+        id: plan
         working-directory: terraform
-        run: terraform plan -out=tfplan
+        run: |
+          terraform plan -out=tfplan
+          # Signal that a plan file exists (for workflow_run case where we reuse plan from CI)
+          echo "plan_exists=true" >> $GITHUB_OUTPUT
+
+      - name: Upload Terraform Plan
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: terraform/tfplan
+          retention-days: 5
+
+  terraform-apply:
+    needs: terraform-plan
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    # Apply only on:
+    # - push to prod/main (PR merge lands here), triggered by the merge commit
+    # - manual workflow_dispatch
+    # Skip on workflow_run (PR close without merge) and skip on PRs themselves
+    if: |
+      github.event_name == 'push' && (
+        github.ref == 'refs/heads/prod' ||
+        github.ref == 'refs/heads/main'
+      ) ||
+      github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          echo "ARM_FEDERATED_TOKEN_FILE=${{ runner.temp }}/azure_federated_token" >> $GITHUB_ENV
+          echo "ARM_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}" >> $GITHUB_ENV
+          echo "ARM_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}" >> $GITHUB_ENV
+          echo "ARM_SUBSCRIPTION_ID=${{ secrets.AZURE_SUBSCRIPTION_ID }}" >> $GITHUB_ENV
+          terraform init -backend-config="key=app-reg.tfstate"
+
+      - name: Download Terraform Plan
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: terraform
 
       - name: Terraform Apply
-        if: github.ref == 'refs/heads/prod' || github.event_name == 'workflow_dispatch'
         working-directory: terraform
         run: terraform apply -auto-approve tfplan
 
