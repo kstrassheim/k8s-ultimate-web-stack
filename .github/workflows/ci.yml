@@ -200,10 +200,11 @@ jobs:
           echo "BACKEND_PID=$BACKEND_PID" >> $GITHUB_ENV
 
       - name: Start frontend (mock mode)
+        env:
+          VITE_NEW_DASHBOARD: 'true'
         run: |
           cd frontend
-          # Start frontend in mock mode - serves at port 5173
-          # npm_config_mock=true is already set in the job env
+          # Start frontend in mock mode with new dashboard enabled - serves at port 5173
           npm run test:frontend &
           FRONTEND_PID=$!
           echo "Frontend PID: $FRONTEND_PID"
@@ -221,6 +222,7 @@ jobs:
       - name: Run E2E Tests (Cypress directly, no server spawning)
         env:
           npm_config_mock: 'true'
+          VITE_NEW_DASHBOARD: 'true'
         run: |
           cd frontend
           # Run Cypress directly - backend is already running in the background
