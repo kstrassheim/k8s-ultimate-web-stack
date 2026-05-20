@@ -7,3 +7,5 @@ export const developmentUrl = 'http://localhost:5173';
 export const backendSocketUrl = __PROD_SOCKET_URI__;
 export const backendUrl = isProd  ? '': productionUrl;
 export const frontendUrl = isProd ? productionUrl : developmentUrl;
+// Feature flag for the new dashboard UI (WorldlineMonitor)
+export const isNewDashboardEnabled = import.meta.env.VITE_NEW_DASHBOARD === 'true';
