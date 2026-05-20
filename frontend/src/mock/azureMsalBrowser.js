@@ -392,10 +392,43 @@ export class PublicClientApplication {
   }
 
   getActiveAccount() {
-    if (!this.isAuthenticated || !this.accounts.length) {
-      return null;
+    // Priority 1: authenticated account in memory (normal flow after login)
+    if (this.isAuthenticated && this.accounts.length > 0) {
+      return this.accounts[0];
     }
-    return this.accounts[0];
+
+    // Priority 2: MOCKROLE in localStorage (test environment)
+    // This ensures cy.setMockRole() works even when initialize() hasn't set isAuthenticated/accounts yet.
+    // This handles the case where ProtectedRoute checks getActiveAccount() BEFORE any loginPopup() call.
+    try {
+      const mockRole = this._storage?.getItem('MOCKROLE');
+      if (mockRole) {
+        const targetRole = mockRole.toLowerCase();
+        const mockAccount = this._allAccounts.find(account => {
+          const roles = account.idTokenClaims?.roles || [];
+          return roles.some(role => role.toLowerCase() === targetRole);
+        });
+        if (mockAccount) {
+          return mockAccount;
+        }
+      }
+    } catch (e) {
+      // ignore storage access errors
+    }
+
+    // Priority 3: fallback to active account index (handles persisted session after page reload)
+    const persistedAccountId = this._getPersistedAccountId();
+    if (persistedAccountId) {
+      const account = this._allAccounts.find(a => a.localAccountId === persistedAccountId);
+      if (account) return account;
+    }
+
+    // Priority 4: if isAuthenticated but accounts not hydrated yet (initialize race), use activeAccountIndex
+    if (this.isAuthenticated && this.activeAccountIndex < this._allAccounts.length) {
+      return this._allAccounts[this.activeAccountIndex];
+    }
+
+    return null;
   }
 
   setActiveAccount(accountParam) {
