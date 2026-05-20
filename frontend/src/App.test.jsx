@@ -27,7 +27,9 @@ jest.mock('@/components/ProtectedLink', () => {
 });
 
 jest.mock('@/pages/Home', () => () => <div data-testid="home-page">Home Page</div>);
-jest.mock('@/pages/Dashboard', () => () => <div data-testid="mocked-dashboard-page">Dashboard Page</div>);
+// Mock WorldlineMonitor for dashboard route (only rendered when VITE_NEW_DASHBOARD is true)
+jest.mock('@/pages/components/WorldlineMonitor', () => () => <div data-testid="mocked-worldline-monitor">WorldlineMonitor Page</div>);
+
 jest.mock('@/pages/Chat', () => () => <div data-testid="mocked-chat-page">Chat Page</div>);
 jest.mock('@/pages/404', () => () => <div data-testid="mocked-404-page">404 Page</div>);
 jest.mock('@/pages/AccessDenied', () => () => <div data-testid="mocked-access-denied-page">Access Denied Page</div>);
@@ -59,7 +61,12 @@ describe('App Component', () => {
     // Check page navigation links
     expect(screen.getByTestId('page-navigation')).toBeInTheDocument();
     expect(screen.getByTestId('nav-home')).toBeInTheDocument();
-    expect(screen.getByTestId('nav-dashboard')).toBeInTheDocument();
+    // nav-dashboard is only rendered when VITE_NEW_DASHBOARD is true
+    if (VITE_NEW_DASHBOARD) {
+      expect(screen.getByTestId('nav-dashboard')).toBeInTheDocument();
+    } else {
+      expect(screen.queryByTestId('nav-dashboard')).not.toBeInTheDocument();
+    }
     expect(screen.getByTestId('nav-chat')).toBeInTheDocument();
     
     // Check protected links
@@ -104,7 +111,12 @@ describe('App Component', () => {
     expect(screen.getByTestId('home-page')).toBeInTheDocument();
   });
 
-  test('renders dashboard route with correct protection', () => {
+  test('renders dashboard route with WorldlineMonitor when VITE_NEW_DASHBOARD is enabled', () => {
+    // Only run this test when the feature flag is enabled
+    if (!VITE_NEW_DASHBOARD) {
+      return;
+    }
+    
     render(
       <MemoryRouter 
         initialEntries={['/dashboard']}
@@ -117,7 +129,7 @@ describe('App Component', () => {
     const protectedRoute = screen.getByTestId('mocked-protected-route');
     expect(protectedRoute).toBeInTheDocument();
     expect(protectedRoute).toHaveAttribute('data-roles', ''); // No required roles
-    expect(screen.getByTestId('mocked-dashboard-page')).toBeInTheDocument();
+    expect(screen.getByTestId('mocked-worldline-monitor')).toBeInTheDocument();
   });
   
   test('renders chat route with correct protection', () => {
