@@ -7,3 +7,4 @@ export const developmentUrl = 'http://localhost:5173';
 export const backendSocketUrl = __PROD_SOCKET_URI__;
 export const backendUrl = isProd  ? '': productionUrl;
 export const frontendUrl = isProd ? productionUrl : developmentUrl;
+export const isNewDashboardEnabled = __NEW_DASHBOARD__;

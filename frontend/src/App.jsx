@@ -9,10 +9,11 @@ import ProtectedRoute from "@/components/ProtectedRoute";
 import ProtectedLink from "@/components/ProtectedLink";
 // get the pages
 import Home from '@/pages/Home';
-import Dashboard from '@/pages/Dashboard';
 import Chat from '@/pages/Chat';
 // Add new imports for Experiments and DMails
 import Experiments from '@/pages/Experiments';
+import WorldlineMonitor from '@/pages/components/WorldlineMonitor';
+import { isNewDashboardEnabled } from '@/config';
 
 function App() {
   return (
@@ -47,7 +48,7 @@ function App() {
             {/* Main navigation links */}
             <Nav className="me-auto" data-testid="page-navigation">
               <Nav.Link as={Link} to="/" data-testid="nav-home">Home</Nav.Link>
-              <Nav.Link as={Link} to="/dashboard" data-testid="nav-dashboard">Dashboard</Nav.Link>
+              <Nav.Link as={Link} to="/dashboard" data-testid="nav-dashboard" style={{ display: isNewDashboardEnabled ? undefined : 'none' }}>Dashboard</Nav.Link>
               <Nav.Link as={Link} to="/chat" data-testid="nav-chat">Chat</Nav.Link>
               <ProtectedLink requiredRoles={["Admin"]}>
                 <Nav.Link as={Link} to="/experiments" data-testid="nav-experiments">Experiments</Nav.Link>
@@ -69,7 +70,7 @@ function App() {
             path="/dashboard"
             element={
               <ProtectedRoute requiredRoles={[]}>
-                <Dashboard />
+                <WorldlineMonitor />
               </ProtectedRoute>
             }
           />
