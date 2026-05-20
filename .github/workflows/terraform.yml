@@ -20,6 +20,7 @@ on:
 permissions:
   id-token: write
   contents: read
+  pull-requests: write
 
 jobs:
   plan:
@@ -63,11 +64,27 @@ jobs:
           path: terraform/tfplan
           retention-days: 2
 
+      - name: Comment Terraform Plan on PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const plan = fs.readFileSync('terraform/tfplan', 'utf8');
+            const maxLen = 65000;
+            const truncated = plan.length > maxLen ? plan.slice(0, maxLen) + '\n...[truncated]' : plan;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: '## Terraform Plan\n```hcl\n' + truncated + '\n```'
+            });
+
   apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
-    # Only apply on push to prod/main or manual trigger — NOT on PR updates
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/main') || github.event_name == 'workflow_dispatch'
+    # Only apply on push to prod OR when a PR is merged to main, or manual trigger
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/main' && github.event.pull_request?.merged == true) || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
