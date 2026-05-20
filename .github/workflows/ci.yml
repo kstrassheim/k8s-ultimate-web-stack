@@ -138,10 +138,8 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        continue-on-error: true
         working-directory: terraform
-        run: |
-          terraform plan -no-color 2>&1 | tee plan_output.txt; exit 0
+        run: terraform plan -no-color 2>&1 | tee plan_output.txt || { echo "PLAN FAILED" >> plan_output.txt; exit 1; }
 
       - name: Post Plan Result as PR Comment
         if: always()
@@ -164,6 +162,14 @@ jobs:
               issue_number: context.issue.number,
               body: `${emoji} Terraform Plan (${status})\n\n\`\`\`\n${planText}\n\`\`\``
             });
+            if (status !== 'success') {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['terraform-plan-failed']
+              });
+            }
 
   e2e-tests:
     runs-on: ubuntu-latest
