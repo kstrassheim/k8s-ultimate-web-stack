@@ -76,7 +76,7 @@ jobs:
             const fs = require('fs');
             let planText = '(plan output not available)';
             try {
-              const path = '${{ github.workspace }}/terraform/tfplan_output.txt';
+              const path = 'terraform/tfplan_output.txt';
               if (fs.existsSync(path)) {
                 planText = fs.readFileSync(path, 'utf8').substring(0, 65536);
               }
