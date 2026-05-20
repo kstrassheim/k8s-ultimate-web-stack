@@ -392,10 +392,43 @@ export class PublicClientApplication {
   }
 
   getActiveAccount() {
-    if (!this.isAuthenticated || !this.accounts.length) {
-      return null;
+    // Priority 1: authenticated account in memory (normal flow after login)
+    if (this.isAuthenticated && this.accounts.length > 0) {
+      return this.accounts[0];
     }
-    return this.accounts[0];
+
+    // Priority 2: MOCKROLE in localStorage (test environment)
+    // This ensures cy.setMockRole() works even when initialize() hasn't set isAuthenticated/accounts yet.
+    // This handles the case where ProtectedRoute checks getActiveAccount() BEFORE any loginPopup() call.
+    try {
+      const mockRole = this._storage?.getItem('MOCKROLE');
+      if (mockRole) {
+        const targetRole = mockRole.toLowerCase();
+        const mockAccount = this._allAccounts.find(account => {
+          const roles = account.idTokenClaims?.roles || [];
+          return roles.some(role => role.toLowerCase() === targetRole);
+        });
+        if (mockAccount) {
+          return mockAccount;
+        }
+      }
+    } catch (e) {
+      // ignore storage access errors
+    }
+
+    // Priority 3: fallback to active account index (handles persisted session after page reload)
+    const persistedAccountId = this._getPersistedAccountId();
+    if (persistedAccountId) {
+      const account = this._allAccounts.find(a => a.localAccountId === persistedAccountId);
+      if (account) return account;
+    }
+
+    // Priority 4: if isAuthenticated but accounts not hydrated yet (initialize race), use activeAccountIndex
+    if (this.isAuthenticated && this.activeAccountIndex < this._allAccounts.length) {
+      return this._allAccounts[this.activeAccountIndex];
+    }
+
+    return null;
   }
 
   setActiveAccount(accountParam) {
@@ -460,15 +493,13 @@ export class PublicClientApplication {
   }
   
   initialize() {
-    // Re-evaluate MOCKROLE now that localStorage may have been set by tests.
-    // The constructor ran before cy.setMockRole() was called, so activeAccountIndex
-    // may be wrong (defaulted to index 0). Re-read from localStorage to fix it.
-    this.activeAccountIndex = this._getInitialActiveAccountIndex();
-    this.accounts = [this._allAccounts[this.activeAccountIndex]];
-    // Persist auth state so getAllAccounts() returns this account after initialization
-    this._persistAuthState(true);
-    this._persistActiveAccount(this.accounts[0]);
-    return Promise.resolve();
+    // After initialization completes, re-evaluate activeAccountIndex from MOCKROLE
+    // (constructor ran before cy.setMockRole() was called in Cypress beforeEach).
+    // Then hydrate auth state so the correct account is active.
+    return Promise.resolve().then(() => {
+      this.activeAccountIndex = this._getInitialActiveAccountIndex();
+      this._hydrateAuthenticationState();
+    });
   }
   
   setNavigationClient() {}
