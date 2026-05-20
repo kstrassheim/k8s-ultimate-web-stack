@@ -160,7 +160,8 @@ export default defineConfig({
     __MOCK__: JSON.stringify(isMockEnabled),
     // define another production uri for deployment then local
     __PROD_URI__: isDeployment ? JSON.stringify(tfconfig.web_url.value) : JSON.stringify('http://localhost:8000'),
-    __PROD_SOCKET_URI__: isDeployment ? JSON.stringify(tfconfig.web_url.value.replace('https://', 'wss://')): JSON.stringify('ws://localhost:8000')
+    __PROD_SOCKET_URI__: isDeployment ? JSON.stringify(tfconfig.web_url.value.replace('https://', 'wss://')): JSON.stringify('ws://localhost:8000'),
+    __NEW_DASHBOARD__: JSON.stringify(process.env.VITE_NEW_DASHBOARD === 'true')
   },
   build: {
     outDir: '../backend/dist',

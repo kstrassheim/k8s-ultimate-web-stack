@@ -13,6 +13,7 @@ import Dashboard from '@/pages/Dashboard';
 import Chat from '@/pages/Chat';
 // Add new imports for Experiments and DMails
 import Experiments from '@/pages/Experiments';
+import { newDashboardEnabled } from '@/config';
 
 function App() {
   return (
@@ -69,7 +70,11 @@ function App() {
             path="/dashboard"
             element={
               <ProtectedRoute requiredRoles={[]}>
-                <Dashboard />
+                {newDashboardEnabled ? (
+                  <div data-testid="new-dashboard-placeholder">New Dashboard coming soon...</div>
+                ) : (
+                  <Dashboard />
+                )}
               </ProtectedRoute>
             }
           />
