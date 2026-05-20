@@ -102,6 +102,34 @@ jobs:
           path: frontend/coverage/lcov-report
           if-no-files-found: ignore
 
+  terraform-validate:
+    name: Terraform Validate
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: Terraform Init
+        working-directory: terraform
+        env:
+          ARM_CLIENT_ID: dummy
+          ARM_TENANT_ID: dummy
+          ARM_SUBSCRIPTION_ID: dummy
+        run: |
+          # Use a dummy backend for validate-only (no state writes)
+          terraform init -backend=false -input=false
+        continue-on-error: false
+
+      - name: Terraform Validate
+        working-directory: terraform
+        run: terraform validate
+
   e2e-tests:
     runs-on: ubuntu-latest
 
