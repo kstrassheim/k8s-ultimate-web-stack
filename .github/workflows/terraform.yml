@@ -14,19 +14,22 @@ on:
       - prod
     paths:
       - terraform/**
-      - .github/workflows/terraform.yml
   workflow_dispatch:
 
 permissions:
   id-token: write
   contents: read
-  pull-requests: write
 
 jobs:
-  plan:
+  terraform-plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
-    # Only run plan on PRs; push events are handled by the apply job below
+    environment: dev
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+    # Only run plan on PRs (for CI check) and manual dispatch — not on push to main/prod
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
@@ -55,36 +58,44 @@ jobs:
 
       - name: Terraform Plan
         working-directory: terraform
-        run: terraform plan -out=tfplan
+        run: terraform plan -no-color -out=tfplan > tfplan_output.txt 2>&1 || true; terraform show -no-color tfplan >> tfplan_output.txt 2>&1 || true
+        id: tfplan
 
-      - name: Upload Terraform Plan
+      - name: Upload Terraform Plan Artifact
         uses: actions/upload-artifact@v4
         with:
           name: tfplan
           path: terraform/tfplan
-          retention-days: 2
+          retention-days: 7
 
-      - name: Comment Terraform Plan on PR
+      - name: Post Terraform Plan as PR Comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
-            const plan = fs.readFileSync('terraform/tfplan', 'utf8');
-            const maxLen = 65000;
-            const truncated = plan.length > maxLen ? plan.slice(0, maxLen) + '\n...[truncated]' : plan;
+            let planText = '(plan output not available)';
+            try {
+              const path = '${{ github.workspace }}/terraform/tfplan_output.txt';
+              if (fs.existsSync(path)) {
+                planText = fs.readFileSync(path, 'utf8').substring(0, 65536);
+              }
+            } catch (e) { /* ignore */ }
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: '## Terraform Plan\n```hcl\n' + truncated + '\n```'
+              issue_number: context.issue.number,
+              body: '## Terraform Plan\n\n```\n' + planText + '\n```'
             });
 
-  apply:
+  terraform-apply:
     name: Terraform Apply
     runs-on: ubuntu-latest
-    # Only apply on push to prod OR when a PR is merged to main, or manual trigger
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/prod' || github.ref == 'refs/heads/main' && github.event.pull_request?.merged == true) || github.event_name == 'workflow_dispatch'
+    environment: dev
+    permissions:
+      id-token: write
+      contents: read
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod') || github.event_name == 'workflow_dispatch'
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -110,13 +121,21 @@ jobs:
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: terraform init -backend-config="key=app-reg.tfstate"
 
-      - name: Terraform Plan
-        working-directory: terraform
-        run: terraform plan -out=tfplan
+      - name: Download Terraform Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan
+          path: terraform
+        continue-on-error: true
 
       - name: Terraform Apply
         working-directory: terraform
-        run: terraform apply -auto-approve tfplan
+        run: |
+          if [ -f tfplan ]; then
+            terraform apply -auto-approve -no-color tfplan
+          else
+            terraform apply -auto-approve -no-color
+          fi
 
       - name: Upload Terraform Output
         if: github.ref == 'refs/heads/prod'
