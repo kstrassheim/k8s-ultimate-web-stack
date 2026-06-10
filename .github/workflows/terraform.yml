@@ -12,6 +12,12 @@ on:
     branches:
       - main
       - prod
+    # No `paths:` filter here — the `terraform-plan` job is a required
+    # status check on `main`/`prod`, and the check must be reported on
+    # every PR (even ones that don't touch terraform/) so branch
+    # protection can gate the merge. With a paths filter, PRs that
+    # don't touch terraform/ would have no `Terraform Plan` check_run
+    # and the merge would stay blocked.
   workflow_dispatch:
 
 permissions:
