@@ -1,3 +1,19 @@
+# This stack provisions the Azure AD app registration that the
+# k8s-ultimate-web-stack backend (../backend/) authenticates against.
+#
+# The backend (FastAPI + msal + azure-identity, see
+# ../backend/requirements.in) obtains tokens via MSAL against the
+# `azuread_application.reg` resource below; the Oauth2 scope exposed
+# here (`user_impersonation` under `api://<client_id>`) is what the
+# backend's `/.auth`-style routes validate.
+#
+# Locking the backend Python dependency tree (../backend/requirements.txt,
+# generated from ../backend/requirements.in with `uv pip compile
+# --universal --generate-hashes --python-version 3.12`) means the exact
+# `msal` and `azure-identity` versions that talk to this app reg are
+# pinned — re-running `uv pip sync` reproduces a byte-identical closure
+# on every CI run and on the deployed pod.
+
 terraform {
   required_providers {
     azurerm = {
