@@ -11,18 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     && rm -rf /var/lib/apt/lists*
 
-# Install Python dependencies
+# Install Python dependencies via uv (locked transitive tree with hashes)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY backend/requirements.txt /app/
-RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
-
-# Remove Cosmos/TinyDB-related deps; add MongoDB
-RUN pip uninstall -y azure-cosmos tinydb opencensus-ext-azure opencensus-ext-fastapi 2>/dev/null || true \
-    && pip install --no-cache-dir --break-system-packages \
-    pymongo==4.10.1 \
-    opentelemetry-api \
-    opentelemetry-sdk \
-    opentelemetry-instrumentation-fastapi \
-    opentelemetry-exporter-otlp
+RUN uv pip sync --system --break-system-packages requirements.txt
 
 # Copy backend source
 COPY backend/ /app/

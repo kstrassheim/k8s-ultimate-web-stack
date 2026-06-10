@@ -4,8 +4,12 @@ cd frontend
 npm install
 echo -e "\033[34mInitializing Backend\033[0m"
 cd ../
-python3 -m venv backend/venv
-backend/venv/bin/pip install -r ./backend/requirements.txt
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+uv venv backend/venv --python 3.12
+VIRTUAL_ENV="$PWD/backend/venv" uv pip sync backend/requirements.txt
 
 cd backend
 # Activate the virtual environment

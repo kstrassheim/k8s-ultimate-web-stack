@@ -172,6 +172,27 @@ CI runs on every push to `main` / `prod` and on all PRs via `.github/workflows/c
 - **Jest** frontend unit tests with coverage
 - **Cypress** e2e tests (headless, no intercepts — mock backend mode)
 
+## Dependency locking (uv)
+
+Backend Python dependencies are managed with [`uv`](https://docs.astral.sh/uv/) and shipped as a fully-pinned, hash-verified, cross-platform lock.
+
+- **`backend/requirements.in`** — hand-edited selector of direct (top-level) packages.
+- **`backend/requirements.txt`** — **generated lock** of the full transitive tree with `--generate-hashes`, resolved across Linux + macOS + Windows (`--universal`). **Never edit by hand.**
+
+The `init.sh` / `initq.sh` setup scripts, the `backend/Dockerfile`, and the `backend-unit-tests` / `e2e-tests` CI jobs all install via `uv pip sync requirements.txt`, so the same lock is consumed in dev, CI, and the container image. If a future PaaS deploy ever reads `requirements.txt` by name, it will install the locked closure with no deploy-config change.
+
+### Re-locking after a dependency change
+
+```bash
+# 1. edit backend/requirements.in (add/remove/bump a DIRECT dependency)
+# 2. regenerate the lock
+uv pip compile backend/requirements.in --universal --generate-hashes \
+  --python-version 3.12 -o backend/requirements.txt
+# 3. review the diff, then commit BOTH files
+```
+
+Use `--upgrade` to refresh all packages to the latest allowed versions, or `--upgrade-package NAME` to bump a single package. `uv` is installed automatically by the setup scripts and CI when missing.
+
 ## Secrets
 
 No raw Secrets in git. Credentials are managed via the **Sealed Secrets** pattern:

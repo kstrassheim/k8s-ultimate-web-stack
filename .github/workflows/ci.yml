@@ -51,8 +51,8 @@ jobs:
       - name: Install backend dependencies
         run: |
           cd backend
-          pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install --upgrade pip uv
+          uv pip sync --system requirements.txt
           # Copy mock terraform config for MOCK=true test runs
           cp -n mock/terraform.mock.config.json terraform.config.json 2>/dev/null || true
 
@@ -152,10 +152,11 @@ jobs:
       - name: Install backend dependencies
         run: |
           cd backend
-          python -m pip install --upgrade pip
-          python -m venv venv
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          uv venv venv --python 3.12
           source venv/bin/activate
-          pip install -r requirements.txt
+          uv pip sync requirements.txt
           # Copy mock terraform config for MOCK=true test runs
           cp -n mock/terraform.mock.config.json terraform.config.json 2>/dev/null || true
           # Use MOCK mode so no real MongoDB is needed
