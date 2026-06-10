@@ -214,4 +214,4 @@ MongoDB connection uses the Kubernetes-internal Service DNS (`mongodb://mongodb:
 
 ## Reference
 
-- Parent project: [ultimate-web-stack](https://github.com/kstrassheim/ultimate-web-stack)
+- Parent project: [ultimate-web-stack](https://github.com/kstrassheim/ultimate-web-stack)# last touched at 2026-06-10T19:35:17Z to nudge workflow trigger re-evaluation
