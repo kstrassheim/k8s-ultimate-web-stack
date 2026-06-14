@@ -1,13 +1,14 @@
 name: Build & Push Images
 
 # Builds the backend + frontend images on the in-cluster self-hosted runner
-# (docker-in-docker) and pushes them to the mainpi registry, then pins the
-# matching environment overlay to the immutable image so ArgoCD rolls it out.
+# (docker-in-docker) and pushes them to the mainpi registry. No git write-back
+# and no cluster credentials are needed: ArgoCD auto-syncs the manifests, and
+# the deployments use imagePullPolicy: Always, so the channel tag is re-pulled
+# when pods restart (same pattern as the other cluster projects).
 #
-#   push main -> build :dev + :sha-<short>  -> pin k8s/environments/dev  -> dev
-#   push prod -> build :test + :sha-<short> -> pin k8s/environments/test -> test
-#
-# Prod (tag-based) is handled by release.yml.
+#   push main      -> :dev   (+ :sha-<short>)  -> ultimate-web-stack-dev
+#   push prod      -> :test  (+ :sha-<short>)  -> ultimate-web-stack-test
+#   push tag vX.Y  -> :prod  (+ :vX.Y.Z)       -> ultimate-web-stack
 #
 # The runner injects REGISTRY_URL / REGISTRY_USERNAME / REGISTRY_PASSWORD via
 # the `registry-creds` secret and already trusts the registry CA.
@@ -17,16 +18,8 @@ on:
     branches:
       - main
       - prod
-    # Don't rebuild on manifest/docs-only changes (incl. the bot's own
-    # promote commit), which would otherwise loop.
-    paths-ignore:
-      - 'k8s/**'
-      - 'argocd/**'
-      - '**.md'
-
-concurrency:
-  group: build-images-${{ github.ref }}
-  cancel-in-progress: false
+    tags:
+      - 'v*'
 
 jobs:
   build-push:
@@ -45,12 +38,16 @@ jobs:
           set -euo pipefail
           repo="${REGISTRY_URL}/ultimate-web-stack/${{ matrix.component }}"
           short_sha="${GITHUB_SHA::7}"
-          case "$GITHUB_REF" in
-            refs/heads/main) channel=dev ;;
-            refs/heads/prod) channel=test ;;
-            *) echo "Unsupported ref $GITHUB_REF"; exit 1 ;;
-          esac
-          tags="${repo}:${channel} ${repo}:sha-${short_sha}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tags="${repo}:prod ${repo}:${GITHUB_REF_NAME}"
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            tags="${repo}:dev ${repo}:sha-${short_sha}"
+          elif [[ "$GITHUB_REF" == refs/heads/prod ]]; then
+            tags="${repo}:test ${repo}:sha-${short_sha}"
+          else
+            echo "Ref $GITHUB_REF is not a release ref; nothing to build."
+            exit 1
+          fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
           echo "Tags: ${tags}"
 
@@ -73,36 +70,3 @@ jobs:
           for t in ${{ steps.meta.outputs.tags }}; do
             docker push "${t}"
           done
-
-  promote:
-    needs: build-push
-    runs-on: arc-runner-scale-k8s-ultimate-web-stack
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.ref_name }}
-
-      - name: Pin overlay to the new image and commit
-        run: |
-          set -euo pipefail
-          short_sha="${GITHUB_SHA::7}"
-          case "$GITHUB_REF" in
-            refs/heads/main) env_dir=k8s/environments/dev ;;
-            refs/heads/prod) env_dir=k8s/environments/test ;;
-            *) echo "Unsupported ref $GITHUB_REF"; exit 1 ;;
-          esac
-          # Overlay images use a single tag for backend + frontend; rewrite both.
-          sed -i "s/^\( *newTag:\).*/\1 sha-${short_sha}/" "${env_dir}/kustomization.yaml"
-          if git diff --quiet; then
-            echo "Overlay already at sha-${short_sha}; nothing to commit."
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "${env_dir}/kustomization.yaml"
-          git commit -m "ci: roll out sha-${short_sha} to ${env_dir##*/} [skip ci]"
-          git pull --rebase origin "${GITHUB_REF_NAME}"
-          git push origin "HEAD:${GITHUB_REF_NAME}"

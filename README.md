@@ -106,19 +106,21 @@ and builds + pushes both images on every push. The runner already trusts the
 registry CA and gets credentials from the `registry-creds` secret, so no setup
 is needed.
 
-Builds map to the GitOps environments, and CI **pins the overlay to the
-immutable image** after pushing — so ArgoCD sees a manifest change and rolls
-the new image out automatically (no manual restart):
+`.github/workflows/build-images.yml` builds + pushes both images on every
+push. The channel tag (`:dev` / `:test` / `:prod`) is what each overlay
+references; an immutable tag is pushed alongside it for traceability:
 
-| Workflow | Trigger | Images pushed | Overlay pinned (committed) | Rolls out to |
-|----------|---------|---------------|----------------------------|--------------|
-| `build-images.yml` | push `main` | `:dev`, `:sha-<short>` | `dev` → `:sha-<short>` (on `main`) | `ultimate-web-stack-dev` |
-| `build-images.yml` | push `prod` | `:test`, `:sha-<short>` | `test` → `:sha-<short>` (on `prod`) | `ultimate-web-stack-test` |
-| `release.yml` | manual (version input) | `:vX.Y.Z`, `:prod` | `prod` → `:vX.Y.Z` (commit on `prod`, then tag `vX.Y.Z`) | `ultimate-web-stack` |
+| Trigger | Channel tag | Immutable tag | Environment |
+|---------|-------------|---------------|-------------|
+| push `main`      | `:dev`  | `:sha-<short>` | `ultimate-web-stack-dev` |
+| push `prod`      | `:test` | `:sha-<short>` | `ultimate-web-stack-test` |
+| push tag `vX.Y.Z`| `:prod` | `:vX.Y.Z`      | `ultimate-web-stack` |
 
-Pods pull from `mainpi.local:5000` (nodes trust this host via the cluster
-`registries.yaml`, so no per-namespace pull secret is needed) with
-`imagePullPolicy: Always`. To build by hand:
+No git write-back or cluster credentials are involved — same as the other
+projects on the cluster. ArgoCD keeps the manifests synced; pods pull from
+`mainpi.local:5000` (nodes trust this host via the cluster `registries.yaml`,
+so no per-namespace pull secret is needed) with `imagePullPolicy: Always`.
+To build by hand:
 
 ```bash
 docker build -t mainpi.local:5000/ultimate-web-stack/backend:dev  -f backend/Dockerfile  .
@@ -127,14 +129,14 @@ docker push mainpi.local:5000/ultimate-web-stack/backend:dev
 docker push mainpi.local:5000/ultimate-web-stack/frontend:dev
 ```
 
-**Cutting a prod release:** run the **Release (prod)** workflow from the Actions
-tab with a `vX.Y.Z` version. It builds the versioned images, pins the prod
-overlay to that version on the `prod` branch, and creates the tag — which
-ArgoCD's prod app (`targetRevision: "*"`) then resolves and deploys.
+**Cutting a prod release:** tag a commit on the `prod` branch with `vX.Y.Z` and
+push the tag. CI builds `:vX.Y.Z` + `:prod`, and ArgoCD's prod app
+(`targetRevision: "*"`) resolves the new tag and syncs.
 
-> The commit-back jobs push with the workflow `GITHUB_TOKEN` (`contents: write`)
-> and mark commits `[skip ci]`. If `main` / `prod` are protected branches, allow
-> the GitHub Actions bot to push to them (or relax the rule for the bot).
+> Because the channel tag is mutable, a freshly pushed image is picked up when
+> the pod restarts. To roll it out immediately, run
+> `kubectl rollout restart deploy -n <namespace>` from a machine with cluster
+> access (e.g. `ssh mainpi.local`).
 
 ### 3. Apply k8s manifests directly (one-shot)
 
@@ -230,10 +232,9 @@ CI runs on every push to `main` / `prod` and on all PRs via `.github/workflows/c
 - **Jest** frontend unit tests with coverage
 - **Cypress** e2e tests (headless, no intercepts — mock backend mode)
 
-`.github/workflows/build-images.yml` builds + pushes images and rolls out
-`dev` / `test` on pushes to `main` / `prod`; `.github/workflows/release.yml`
-cuts tagged prod releases (see
-[Build and push container images](#2-build-and-push-container-images)).
+`.github/workflows/build-images.yml` builds + pushes the backend + frontend
+images to the in-cluster registry on every push to `main` / `prod` and on `v*`
+tags (see [Build and push container images](#2-build-and-push-container-images)).
 
 ## Secrets
 
