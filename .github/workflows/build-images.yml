@@ -1,0 +1,72 @@
+name: Build & Push Images
+
+# Builds the backend + frontend images on the in-cluster self-hosted runner
+# (docker-in-docker) and pushes them to the mainpi registry. No git write-back
+# and no cluster credentials are needed: ArgoCD auto-syncs the manifests, and
+# the deployments use imagePullPolicy: Always, so the channel tag is re-pulled
+# when pods restart (same pattern as the other cluster projects).
+#
+#   push main      -> :dev   (+ :sha-<short>)  -> ultimate-web-stack-dev
+#   push prod      -> :test  (+ :sha-<short>)  -> ultimate-web-stack-test
+#   push tag vX.Y  -> :prod  (+ :vX.Y.Z)       -> ultimate-web-stack
+#
+# The runner injects REGISTRY_URL / REGISTRY_USERNAME / REGISTRY_PASSWORD via
+# the `registry-creds` secret and already trusts the registry CA.
+
+on:
+  push:
+    branches:
+      - main
+      - prod
+    tags:
+      - 'v*'
+
+jobs:
+  build-push:
+    runs-on: arc-runner-scale-k8s-ultimate-web-stack
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image tags
+        id: meta
+        run: |
+          set -euo pipefail
+          repo="${REGISTRY_URL}/ultimate-web-stack/${{ matrix.component }}"
+          short_sha="${GITHUB_SHA::7}"
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tags="${repo}:prod ${repo}:${GITHUB_REF_NAME}"
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            tags="${repo}:dev ${repo}:sha-${short_sha}"
+          elif [[ "$GITHUB_REF" == refs/heads/prod ]]; then
+            tags="${repo}:test ${repo}:sha-${short_sha}"
+          else
+            echo "Ref $GITHUB_REF is not a release ref; nothing to build."
+            exit 1
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          echo "Tags: ${tags}"
+
+      - name: Log in to registry
+        run: |
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" \
+            --username "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Build image
+        run: |
+          set -euo pipefail
+          tag_args=""
+          for t in ${{ steps.meta.outputs.tags }}; do tag_args="${tag_args} -t ${t}"; done
+          # Build context is the repo root (Dockerfiles reference backend/ and frontend/)
+          docker build ${tag_args} -f ${{ matrix.component }}/Dockerfile .
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          for t in ${{ steps.meta.outputs.tags }}; do
+            docker push "${t}"
+          done

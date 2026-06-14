@@ -1,14 +1,27 @@
 # ==============================
-# TEST environment
+# TEST environment  (namespace: ultimate-web-stack-test, deploys from prod branch)
 # ==============================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: future-gadget-test
+namespace: ultimate-web-stack-test
 
-commonLabels:
-  app.kubernetes.io/environment: test
+labels:
+  - pairs:
+      app.kubernetes.io/environment: test
+    includeSelectors: false
+
+resources:
+  - ../base
+
+images:
+  - name: mainpi.local:5000/ultimate-web-stack/backend
+    newTag: test
+  - name: mainpi.local:5000/ultimate-web-stack/frontend
+    newTag: test
 
 patches:
-  - path: ../../patches/test-backend-env.yaml
-  - path: ../../patches/test-frontend-env.yaml
+  - path: patch-backend-env.yaml
+    target:
+      kind: Deployment
+      name: backend

@@ -4,21 +4,21 @@
 apiVersion: argoproj.io/v1alpha1
 kind: AppProject
 metadata:
-  name: future-gadget
+  name: ultimate-web-stack
   namespace: argocd
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
-  description: Future Gadget Lab on local k8s cluster
+  description: Ultimate Web Stack on the mainpi k8s cluster (dev / test / prod)
   sourceRepos:
     - https://github.com/kstrassheim/k8s-ultimate-web-stack.git
     - https://github.com/kstrassheim/k8s-ultimate-web-stack
   destinations:
-    - namespace: future-gadget-dev
+    - namespace: ultimate-web-stack-dev
       server: https://kubernetes.default.svc
-    - namespace: future-gadget-test
+    - namespace: ultimate-web-stack-test
       server: https://kubernetes.default.svc
-    - namespace: future-gadget
+    - namespace: ultimate-web-stack
       server: https://kubernetes.default.svc
     - namespace: argocd
       server: https://kubernetes.default.svc
