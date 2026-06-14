@@ -1,5 +1,5 @@
 # ==============================
-# TEST Backend env patch
+# DEV Backend env patch
 # ==============================
 - op: replace
   path: /spec/template/spec/containers/0/env
@@ -7,10 +7,10 @@
     - name: MONGODB_URI
       value: mongodb://mongodb:27017
     - name: MONGODB_DB
-      value: future_gadget_lab_test
+      value: future_gadget_lab_dev
     - name: MOCK
       value: "false"
     - name: PYTHONPATH
       value: /app
     - name: TF_ENV
-      value: test
+      value: dev

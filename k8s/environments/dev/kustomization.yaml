@@ -1,14 +1,27 @@
 # ==============================
-# DEV environment
+# DEV environment  (namespace: ultimate-web-stack-dev, deploys from main)
 # ==============================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
-namespace: future-gadget-dev
+namespace: ultimate-web-stack-dev
 
-commonLabels:
-  app.kubernetes.io/environment: dev
+labels:
+  - pairs:
+      app.kubernetes.io/environment: dev
+    includeSelectors: false
+
+resources:
+  - ../base
+
+images:
+  - name: mainpi.local:5000/ultimate-web-stack/backend
+    newTag: dev
+  - name: mainpi.local:5000/ultimate-web-stack/frontend
+    newTag: dev
 
 patches:
-  - path: ../../patches/dev-backend-env.yaml
-  - path: ../../patches/dev-frontend-env.yaml
+  - path: patch-backend-env.yaml
+    target:
+      kind: Deployment
+      name: backend

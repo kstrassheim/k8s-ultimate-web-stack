@@ -1,0 +1,82 @@
+name: Release (prod)
+
+# Cuts a production release. Builds versioned images, pins the prod overlay to
+# that version on the prod branch, then creates the tag on that commit.
+# ArgoCD's prod Application tracks the latest semver tag (targetRevision: "*"),
+# so it resolves to the new tag whose tree already references :<version> -> rollout.
+#
+# Run from the Actions tab: provide a version like v1.2.3.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (semver tag, e.g. v1.2.3)'
+        required: true
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build-push:
+    runs-on: arc-runner-scale-k8s-ultimate-web-stack
+    strategy:
+      fail-fast: false
+      matrix:
+        component: [backend, frontend]
+    steps:
+      - name: Checkout prod
+        uses: actions/checkout@v4
+        with:
+          ref: prod
+
+      - name: Validate version
+        run: |
+          set -euo pipefail
+          [[ "${{ inputs.version }}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+            || { echo "version must be vMAJOR.MINOR.PATCH"; exit 1; }
+
+      - name: Log in to registry
+        run: |
+          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" \
+            --username "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Build and push versioned image
+        run: |
+          set -euo pipefail
+          repo="${REGISTRY_URL}/ultimate-web-stack/${{ matrix.component }}"
+          docker build \
+            -t "${repo}:${{ inputs.version }}" \
+            -t "${repo}:prod" \
+            -f ${{ matrix.component }}/Dockerfile .
+          docker push "${repo}:${{ inputs.version }}"
+          docker push "${repo}:prod"
+
+  tag:
+    needs: build-push
+    runs-on: arc-runner-scale-k8s-ultimate-web-stack
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout prod
+        uses: actions/checkout@v4
+        with:
+          ref: prod
+          fetch-depth: 0
+
+      - name: Pin prod overlay, commit, and tag
+        run: |
+          set -euo pipefail
+          v="${{ inputs.version }}"
+          [[ "$v" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "bad version"; exit 1; }
+          sed -i "s/^\( *newTag:\).*/\1 ${v}/" k8s/environments/prod/kustomization.yaml
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet; then
+            git add k8s/environments/prod/kustomization.yaml
+            git commit -m "release: ${v} [skip ci]"
+            git push origin "HEAD:prod"
+          fi
+          git tag "${v}"
+          git push origin "${v}"

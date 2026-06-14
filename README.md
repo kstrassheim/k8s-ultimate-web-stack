@@ -60,10 +60,12 @@ k8s-ultimate-web-stack/
 │   ├── backend/          # backend Deployment + Service
 │   ├── frontend/         # frontend Deployment + Service
 │   ├── mongodb/          # MongoDB StatefulSet
-│   ├── common/           # namespaces
-│   ├── environments/     # kustomize overlays (dev / test / prod)
-│   └── patches/         # per-env env var patches
-├── argocd/               # ArgoCD Application manifests (app-of-apps)
+│   ├── common/           # namespaces (for manual apply)
+│   └── environments/     # kustomize overlays (dev / test / prod) + per-env patches
+├── argocd/               # ArgoCD app-of-apps + per-env Application manifests
+│   ├── project.yaml      # AppProject (ultimate-web-stack)
+│   ├── app-of-apps.yaml  # root Application
+│   └── apps/             # dev.yaml / test.yaml / prod.yaml
 ├── terraform/            # Entra ID App Reg only
 │   ├── app_reg.tf        # App registration + permissions
 │   └── main.tf / outputs.tf
@@ -97,17 +99,42 @@ This creates the App Registration in Entra ID. The app code (backend/frontend) r
 
 ### 2. Build and push container images
 
-```bash
-# Backend
-cd backend
-docker build -t <registry>/future-gadget-dev/backend:latest .
-docker push <registry>/future-gadget-dev/backend:latest
+Images live in the in-cluster registry. CI handles this automatically — the
+`.github/workflows/build-images.yml` workflow runs on the in-cluster
+self-hosted runner (`arc-runner-scale-k8s-ultimate-web-stack`, docker-in-docker)
+and builds + pushes both images on every push. The runner already trusts the
+registry CA and gets credentials from the `registry-creds` secret, so no setup
+is needed.
 
-# Frontend
-cd frontend
-docker build -t <registry>/future-gadget-dev/frontend:latest .
-docker push <registry>/future-gadget-dev/frontend:latest
+Builds map to the GitOps environments, and CI **pins the overlay to the
+immutable image** after pushing — so ArgoCD sees a manifest change and rolls
+the new image out automatically (no manual restart):
+
+| Workflow | Trigger | Images pushed | Overlay pinned (committed) | Rolls out to |
+|----------|---------|---------------|----------------------------|--------------|
+| `build-images.yml` | push `main` | `:dev`, `:sha-<short>` | `dev` → `:sha-<short>` (on `main`) | `ultimate-web-stack-dev` |
+| `build-images.yml` | push `prod` | `:test`, `:sha-<short>` | `test` → `:sha-<short>` (on `prod`) | `ultimate-web-stack-test` |
+| `release.yml` | manual (version input) | `:vX.Y.Z`, `:prod` | `prod` → `:vX.Y.Z` (commit on `prod`, then tag `vX.Y.Z`) | `ultimate-web-stack` |
+
+Pods pull from `mainpi.local:5000` (nodes trust this host via the cluster
+`registries.yaml`, so no per-namespace pull secret is needed) with
+`imagePullPolicy: Always`. To build by hand:
+
+```bash
+docker build -t mainpi.local:5000/ultimate-web-stack/backend:dev  -f backend/Dockerfile  .
+docker build -t mainpi.local:5000/ultimate-web-stack/frontend:dev -f frontend/Dockerfile .
+docker push mainpi.local:5000/ultimate-web-stack/backend:dev
+docker push mainpi.local:5000/ultimate-web-stack/frontend:dev
 ```
+
+**Cutting a prod release:** run the **Release (prod)** workflow from the Actions
+tab with a `vX.Y.Z` version. It builds the versioned images, pins the prod
+overlay to that version on the `prod` branch, and creates the tag — which
+ArgoCD's prod app (`targetRevision: "*"`) then resolves and deploys.
+
+> The commit-back jobs push with the workflow `GITHUB_TOKEN` (`contents: write`)
+> and mark commits `[skip ci]`. If `main` / `prod` are protected branches, allow
+> the GitHub Actions bot to push to them (or relax the rule for the bot).
 
 ### 3. Apply k8s manifests directly (one-shot)
 
@@ -118,11 +145,19 @@ kubectl apply -k k8s/environments/dev
 
 ### 4. Or use ArgoCD GitOps (recommended)
 
+Bootstrap once — apply the project, then the app-of-apps root. The root
+watches `argocd/apps/` and creates the dev / test / prod Applications:
+
 ```bash
-argocd app sync default/future-gadget-dev
+kubectl apply -f argocd/project.yaml
+kubectl apply -f argocd/app-of-apps.yaml
 ```
 
-ArgoCD watches the git repo and syncs automatically on push.
+Thereafter ArgoCD watches the git repo and syncs automatically. To force a sync:
+
+```bash
+argocd app sync ultimate-web-stack-dev
+```
 
 ### 5. Environment configuration
 
@@ -137,7 +172,30 @@ kubectl apply -k k8s/environments/test
 kubectl apply -k k8s/environments/prod
 ```
 
-Environment-specific settings (MongoDB URI, MOCK mode, etc.) are set via `k8s/patches/<env>-backend-env.yaml` and `k8s/patches/<env>-frontend-env.yaml`.
+Environment-specific settings (MongoDB URI, MOCK mode, etc.) are set via `k8s/environments/<env>/patch-backend-env.yaml`.
+
+### 6. Deployment model (namespaces + GitOps promotion)
+
+Each environment maps to its own namespace and its own git ref. ArgoCD
+(running in-cluster on the `mainpi` k3s cluster) reconciles each one:
+
+| Environment | Namespace | Git ref (`targetRevision`) | Sync |
+|-------------|-----------|----------------------------|------|
+| **dev**  | `ultimate-web-stack-dev`  | `main` branch | automated (prune + self-heal) |
+| **test** | `ultimate-web-stack-test` | `prod` branch | automated (prune + self-heal) |
+| **prod** | `ultimate-web-stack`      | latest semver tag (`*`) | automated (prune + self-heal) |
+
+Promotion flow:
+
+```
+push to main      → dev rolls out
+merge main → prod → test rolls out
+tag vX.Y.Z on prod → prod rolls out (ArgoCD resolves "*" to the newest tag)
+```
+
+The ArgoCD Application definitions live in `argocd/apps/` — one file per
+environment (`dev.yaml`, `test.yaml`, `prod.yaml`) — managed by the
+`argocd/app-of-apps.yaml` root.
 
 ## Running locally (mock mode)
 
@@ -171,6 +229,11 @@ CI runs on every push to `main` / `prod` and on all PRs via `.github/workflows/c
 - **pytest** backend unit tests with coverage
 - **Jest** frontend unit tests with coverage
 - **Cypress** e2e tests (headless, no intercepts — mock backend mode)
+
+`.github/workflows/build-images.yml` builds + pushes images and rolls out
+`dev` / `test` on pushes to `main` / `prod`; `.github/workflows/release.yml`
+cuts tagged prod releases (see
+[Build and push container images](#2-build-and-push-container-images)).
 
 ## Secrets
 
