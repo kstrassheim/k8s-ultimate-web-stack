@@ -1,19 +1,11 @@
 name: Terraform
 
+# Plan runs on every PR to main/prod (apply lives in build-images.yml, on merge).
 on:
-  push:
-    branches:
-      - main
-      - prod
-    paths:
-      - terraform/**
-      - .github/workflows/terraform.yml
   pull_request:
     branches:
       - main
       - prod
-    paths:
-      - terraform/**
   workflow_dispatch:
 
 permissions:
