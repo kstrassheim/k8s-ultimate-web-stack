@@ -22,7 +22,10 @@ metadata:
     app: web
     app.kubernetes.io/managed-by: argocd
 spec:
-  replicas: 2
+  # 1 replica: chat/experiments/worldline broadcasts use an in-memory per-pod
+  # connection list, so multiple replicas can't see each other's WS clients.
+  # Scaling >1 would need a pub/sub backplane (e.g. Redis).
+  replicas: 1
   selector:
     matchLabels:
       app: web
