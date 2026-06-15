@@ -1,9 +1,10 @@
 name: CI / Tests
 
+# Tests run on PRs (before merge). They do not re-run on push to main — the PR
+# already validated it, and merging to main triggers the deploy, not tests.
 on:
   push:
     branches:
-      - main
       - prod
   pull_request:
     branches:
