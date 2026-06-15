@@ -6,13 +6,16 @@
 
 # ---- Stage 1: build the SPA ----
 FROM node:22-alpine AS frontend
+# Deploy sub-path the app is served under (e.g. /ultimate-web-stack-dev/).
+# Sets Vite base so assets/router/API resolve under the ingress path.
+ARG BASE_PATH=/
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json* /fe/
 RUN npm ci --legacy-peer-deps
 COPY frontend/ /fe/
 # CI provides frontend/terraform.config.json (real Entra output) before build.
 # Override outDir to /fe/dist (vite.config.js points it at ../backend/dist).
-RUN npm run build -- --outDir dist --emptyOutDir
+RUN npm run build -- --base="$BASE_PATH" --outDir dist --emptyOutDir
 
 # ---- Stage 2: backend + bundled SPA ----
 FROM python:3.12-slim

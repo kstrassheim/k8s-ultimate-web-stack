@@ -13,6 +13,7 @@ labels:
 
 resources:
   - ../base
+  - ingress.yaml
 
 images:
   - name: mainpi.local:5000/ultimate-web-stack/web

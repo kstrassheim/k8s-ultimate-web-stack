@@ -106,18 +106,20 @@ jobs:
           # this host matches the TLS cert and the image refs the deploys pull.
           repo="mainpi.local:5000/ultimate-web-stack/web"
           short_sha="${GITHUB_SHA::7}"
+          # base = the ingress sub-path the SPA is served under per env.
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            tags="${repo}:prod ${repo}:${GITHUB_REF_NAME}"
+            tags="${repo}:prod ${repo}:${GITHUB_REF_NAME}"; base="/ultimate-web-stack/"
           elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
-            tags="${repo}:dev ${repo}:sha-${short_sha}"
+            tags="${repo}:dev ${repo}:sha-${short_sha}"; base="/ultimate-web-stack-dev/"
           elif [[ "$GITHUB_REF" == refs/heads/prod ]]; then
-            tags="${repo}:test ${repo}:sha-${short_sha}"
+            tags="${repo}:test ${repo}:sha-${short_sha}"; base="/ultimate-web-stack-test/"
           else
             echo "Ref $GITHUB_REF is not a release ref; nothing to build."
             exit 1
           fi
           echo "tags=${tags}" >> "$GITHUB_OUTPUT"
-          echo "Tags: ${tags}"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+          echo "Tags: ${tags}  Base: ${base}"
 
       - name: Log in to registry
         run: |
@@ -129,7 +131,7 @@ jobs:
           set -euo pipefail
           tag_args=""
           for t in ${{ steps.meta.outputs.tags }}; do tag_args="${tag_args} -t ${t}"; done
-          docker build ${tag_args} -f backend/Dockerfile .
+          docker build ${tag_args} --build-arg BASE_PATH="${{ steps.meta.outputs.base }}" -f backend/Dockerfile .
 
       - name: Push image
         run: |

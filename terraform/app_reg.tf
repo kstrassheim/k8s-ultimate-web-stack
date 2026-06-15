@@ -39,8 +39,14 @@ resource "azuread_application" "reg" {
   single_page_application {
     redirect_uris = (
       var.env == "dev"
-      ? ["http://localhost:8000/", "http://localhost:5173/"]
-      : []
+      ? [
+        "https://datapi.galaxus.box/ultimate-web-stack-dev/",
+        "http://localhost:8000/",
+        "http://localhost:5173/",
+      ]
+      : var.env == "test"
+      ? ["https://datapi.galaxus.box/ultimate-web-stack-test/"]
+      : ["https://datapi.galaxus.box/ultimate-web-stack/"]
     )
   }
 
