@@ -213,7 +213,7 @@ async def experiments_websocket(websocket: WebSocket):
     except WebSocketDisconnect:
         experiment_connection_manager.disconnect(websocket)
 
-@future_gadget_api_router.websocket("/ws/worldline")
+@future_gadget_api_router.websocket("/ws/worldline-status")
 async def worldline_websocket(websocket: WebSocket):
     await worldline_connection_manager.connect(websocket)
     try:
