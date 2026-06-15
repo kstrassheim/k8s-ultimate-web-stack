@@ -1,6 +1,18 @@
 # ==============================
-# Backend Dockerfile
+# web image — FastAPI backend that also serves the React SPA.
+# (The SPA is a static build; FastAPI serves it from ./dist via the
+#  frontend_router in main.py, so no separate frontend container is needed.)
 # ==============================
+
+# ---- Stage 1: build the SPA ----
+FROM node:22-alpine AS frontend
+WORKDIR /fe
+COPY frontend/package.json frontend/package-lock.json* /fe/
+RUN npm ci --legacy-peer-deps
+COPY frontend/ /fe/
+RUN npm run build
+
+# ---- Stage 2: backend + bundled SPA ----
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -26,6 +38,9 @@ RUN pip uninstall -y azure-cosmos tinydb opencensus-ext-azure opencensus-ext-fas
 
 # Copy backend source
 COPY backend/ /app/
+
+# Bundle the built SPA; FastAPI serves it from ./dist (see main.py)
+COPY --from=frontend /fe/dist /app/dist
 
 # Create non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

@@ -22,29 +22,28 @@ This is not a reimplementation of the application logic — the app code is iden
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│                     Self-hosted k8s cluster                  │
+│                     mainpi k3s cluster                       │
 │                                                              │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐   │
-│  │ MongoDB     │  │  Backend    │  │   Frontend      │   │
-│  │ StatefulSet│  │  (FastAPI)  │  │   (React/Vite)  │   │
-│  │  replSet   │  │  ×2 pods    │  │   ×2 pods        │   │
-│  └─────────────┘  └──────┬──────┘  └────────┬────────┘   │
-│                           │                    │              │
-│                    ┌──────┴──────┐            │              │
-│                    │  backend   │            │              │
-│                    │  Service   │            │              │
-│                    └──────┬──────┘            │              │
-│                           │                    │              │
-│                    ┌──────┴──────┐     ┌───────┴────────┐   │
-│                    │  frontend  │     │  ingress-nginx  │   │
-│                    │  Service   │     │  (nginx-ingress│   │
-│                    └────────────┘     └───────┬────────┘   │
+│  ┌─────────────┐        ┌───────────────────────────┐      │
+│  │ MongoDB     │◄───────│  web  (FastAPI + SPA)      │      │
+│  │ StatefulSet│        │  ×2 pods, port 8000        │      │
+│  │  replSet   │        │  serves /api + the React   │      │
+│  └─────────────┘        │  build from ./dist         │      │
+│                          └─────────────┬─────────────┘      │
+│                                        │                     │
+│                                 ┌──────┴──────┐              │
+│                                 │  web        │              │
+│                                 │  Service    │              │
+│                                 └─────────────┘              │
 └───────────────────────────────────────────────┼──────────────┘
                                                 │
                                     ┌───────────┴───────────┐
                                     │   ArgoCD (in-cluster) │
                                     │   app-of-apps        │
                                     └─────────────────────┘
+
+The app is a SPA, so there is a single deployable: the FastAPI backend serves
+both the API and the built React frontend (no separate frontend container).
 
 GitOps flow:
   git push → ArgoCD detects drift → syncs k8s manifests → cluster updated
@@ -54,11 +53,10 @@ GitOps flow:
 
 ```
 k8s-ultimate-web-stack/
-├── backend/              # FastAPI app (identical to ultimate-web-stack)
-├── frontend/             # React app (identical to ultimate-web-stack)
+├── backend/              # FastAPI app — serves the API and the built SPA
+├── frontend/             # React app source (built into the web image)
 ├── k8s/                  # Kubernetes manifests
-│   ├── backend/          # backend Deployment + Service
-│   ├── frontend/         # frontend Deployment + Service
+│   ├── web/              # web Deployment + Service (backend + SPA)
 │   ├── mongodb/          # MongoDB StatefulSet
 │   ├── common/           # namespaces (for manual apply)
 │   └── environments/     # kustomize overlays (dev / test / prod) + per-env patches
@@ -102,13 +100,12 @@ This creates the App Registration in Entra ID. The app code (backend/frontend) r
 Images live in the in-cluster registry. CI handles this automatically — the
 `.github/workflows/build-images.yml` workflow runs on the in-cluster
 self-hosted runner (`arc-runner-scale-k8s-ultimate-web-stack`, docker-in-docker)
-and builds + pushes both images on every push. The runner already trusts the
-registry CA and gets credentials from the `registry-creds` secret, so no setup
-is needed.
+and builds + pushes the `web` image on every push. The runner already trusts
+the registry CA and gets credentials from the `registry-creds` secret, so no
+setup is needed.
 
-`.github/workflows/build-images.yml` builds + pushes both images on every
-push. The channel tag (`:dev` / `:test` / `:prod`) is what each overlay
-references; an immutable tag is pushed alongside it for traceability:
+The channel tag (`:dev` / `:test` / `:prod`) is what each overlay references;
+an immutable tag is pushed alongside it for traceability:
 
 | Trigger | Channel tag | Immutable tag | Environment |
 |---------|-------------|---------------|-------------|
@@ -123,10 +120,9 @@ so no per-namespace pull secret is needed) with `imagePullPolicy: Always`.
 To build by hand:
 
 ```bash
-docker build -t mainpi.local:5000/ultimate-web-stack/backend:dev  -f backend/Dockerfile  .
-docker build -t mainpi.local:5000/ultimate-web-stack/frontend:dev -f frontend/Dockerfile .
-docker push mainpi.local:5000/ultimate-web-stack/backend:dev
-docker push mainpi.local:5000/ultimate-web-stack/frontend:dev
+# Single image: the Dockerfile builds the SPA and bundles it into the backend.
+docker build -t mainpi.local:5000/ultimate-web-stack/web:dev -f backend/Dockerfile .
+docker push mainpi.local:5000/ultimate-web-stack/web:dev
 ```
 
 **Cutting a prod release:** tag a commit on the `prod` branch with `vX.Y.Z` and
@@ -174,7 +170,7 @@ kubectl apply -k k8s/environments/test
 kubectl apply -k k8s/environments/prod
 ```
 
-Environment-specific settings (MongoDB URI, MOCK mode, etc.) are set via `k8s/environments/<env>/patch-backend-env.yaml`.
+Environment-specific settings (MongoDB URI, MOCK mode, etc.) are set via `k8s/environments/<env>/patch-web-env.yaml`.
 
 ### 6. Deployment model (namespaces + GitOps promotion)
 
@@ -232,9 +228,10 @@ CI runs on every push to `main` / `prod` and on all PRs via `.github/workflows/c
 - **Jest** frontend unit tests with coverage
 - **Cypress** e2e tests (headless, no intercepts — mock backend mode)
 
-`.github/workflows/build-images.yml` builds + pushes the backend + frontend
-images to the in-cluster registry on every push to `main` / `prod` and on `v*`
-tags (see [Build and push container images](#2-build-and-push-container-images)).
+`.github/workflows/build-images.yml` builds + pushes the single `web` image
+(backend + bundled SPA) to the in-cluster registry on every push to
+`main` / `prod` and on `v*` tags
+(see [Build and push container images](#2-build-and-push-container-images)).
 
 ## Secrets
 

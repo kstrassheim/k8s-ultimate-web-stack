@@ -1,17 +1,21 @@
-name: Build & Push Images
+name: Build & Push Image
 
-# Builds the backend + frontend images on the in-cluster self-hosted runner
-# (docker-in-docker) and pushes them to the mainpi registry. No git write-back
-# and no cluster credentials are needed: ArgoCD auto-syncs the manifests, and
-# the deployments use imagePullPolicy: Always, so the channel tag is re-pulled
-# when pods restart (same pattern as the other cluster projects).
+# Builds the web image (FastAPI backend that also serves the React SPA) on the
+# in-cluster self-hosted runner (docker-in-docker) and pushes it to the mainpi
+# registry. No git write-back and no cluster credentials are needed: ArgoCD
+# auto-syncs the manifests, and the deployment uses imagePullPolicy: Always, so
+# the channel tag is re-pulled when pods restart (same pattern as the other
+# cluster projects).
 #
 #   push main      -> :dev   (+ :sha-<short>)  -> ultimate-web-stack-dev
 #   push prod      -> :test  (+ :sha-<short>)  -> ultimate-web-stack-test
 #   push tag vX.Y  -> :prod  (+ :vX.Y.Z)       -> ultimate-web-stack
 #
-# The runner injects REGISTRY_URL / REGISTRY_USERNAME / REGISTRY_PASSWORD via
-# the `registry-creds` secret and already trusts the registry CA.
+# The runner injects REGISTRY_USERNAME / REGISTRY_PASSWORD via the
+# `registry-creds` secret and already trusts the registry CA. We push to
+# mainpi.local:5000 (not REGISTRY_URL=mainpi.galaxus.box:5000): in-cluster,
+# CoreDNS rewrites mainpi.local -> the registry Service, and that host matches
+# both the TLS cert and the image refs the deployments pull.
 
 on:
   push:
@@ -24,10 +28,6 @@ on:
 jobs:
   build-push:
     runs-on: arc-runner-scale-k8s-ultimate-web-stack
-    strategy:
-      fail-fast: false
-      matrix:
-        component: [backend, frontend]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,7 +36,7 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          repo="${REGISTRY_URL}/ultimate-web-stack/${{ matrix.component }}"
+          repo="mainpi.local:5000/ultimate-web-stack/web"
           short_sha="${GITHUB_SHA::7}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tags="${repo}:prod ${repo}:${GITHUB_REF_NAME}"
@@ -53,7 +53,7 @@ jobs:
 
       - name: Log in to registry
         run: |
-          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" \
+          echo "$REGISTRY_PASSWORD" | docker login mainpi.local:5000 \
             --username "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build image
@@ -61,8 +61,9 @@ jobs:
           set -euo pipefail
           tag_args=""
           for t in ${{ steps.meta.outputs.tags }}; do tag_args="${tag_args} -t ${t}"; done
-          # Build context is the repo root (Dockerfiles reference backend/ and frontend/)
-          docker build ${tag_args} -f ${{ matrix.component }}/Dockerfile .
+          # Build context is the repo root; the Dockerfile builds the SPA and
+          # bundles it into the backend image.
+          docker build ${tag_args} -f backend/Dockerfile .
 
       - name: Push image
         run: |

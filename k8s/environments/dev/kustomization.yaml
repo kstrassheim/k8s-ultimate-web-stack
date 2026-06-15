@@ -15,13 +15,11 @@ resources:
   - ../base
 
 images:
-  - name: mainpi.local:5000/ultimate-web-stack/backend
-    newTag: dev
-  - name: mainpi.local:5000/ultimate-web-stack/frontend
+  - name: mainpi.local:5000/ultimate-web-stack/web
     newTag: dev
 
 patches:
-  - path: patch-backend-env.yaml
+  - path: patch-web-env.yaml
     target:
       kind: Deployment
-      name: backend
+      name: web
