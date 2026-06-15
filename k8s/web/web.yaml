@@ -62,15 +62,20 @@ spec:
             limits:
               cpu: "1"
               memory: 512Mi
+          # /health calls psutil.cpu_percent(interval=1), which blocks ~1s, so
+          # the probe timeout must exceed that (default timeoutSeconds=1 fails).
           livenessProbe:
             httpGet:
               path: /health
               port: 8000
-            initialDelaySeconds: 15
-            periodSeconds: 10
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
           readinessProbe:
             httpGet:
               path: /health
               port: 8000
             initialDelaySeconds: 5
-            periodSeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
