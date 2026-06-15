@@ -50,6 +50,9 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.9.0
+          # The Node wrapper needs `node` on PATH, which isn't available for
+          # run-steps on the self-hosted runner; use the raw terraform binary.
+          terraform_wrapper: false
 
       - name: Terraform apply + export config
         working-directory: terraform
