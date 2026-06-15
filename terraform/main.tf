@@ -22,13 +22,13 @@ provider "azurerm" {
   features {}
 }
 
-variable app_name {
+variable "app_name" {
   description = "Base name for all resources"
   default     = "k8s-ultimate-web-stack"
   type        = string
 }
 
-variable env {
+variable "env" {
   description = "Environment name"
   default     = "dev"
   type        = string

@@ -25,3 +25,8 @@ output "oauth2_permission_scope" {
   description = "The OAuth2 permission scope"
   value       = tolist(azuread_application.reg.api[0].oauth2_permission_scope)[0].value
 }
+
+output "requested_graph_api_delegated_permissions" {
+  description = "Microsoft Graph delegated scopes the SPA requests at login"
+  value       = ["User.Read"]
+}
