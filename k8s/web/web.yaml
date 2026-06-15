@@ -1,13 +1,13 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: backend
+  name: web
   labels:
-    app: backend
+    app: web
     app.kubernetes.io/managed-by: argocd
 spec:
   selector:
-    app: backend
+    app: web
   ports:
     - port: 8000
       targetPort: 8000
@@ -17,23 +17,24 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: backend
+  name: web
   labels:
-    app: backend
+    app: web
     app.kubernetes.io/managed-by: argocd
 spec:
   replicas: 2
   selector:
     matchLabels:
-      app: backend
+      app: web
   template:
     metadata:
       labels:
-        app: backend
+        app: web
     spec:
       containers:
-        - name: backend
-          image: mainpi.local:5000/ultimate-web-stack/backend:latest
+        - name: web
+          # FastAPI backend that also serves the React SPA from ./dist
+          image: mainpi.local:5000/ultimate-web-stack/web:latest
           imagePullPolicy: Always
           ports:
             - containerPort: 8000
