@@ -8,6 +8,7 @@ import AccessDenied from '@/pages/AccessDenied';
 import ProtectedRoute from "@/components/ProtectedRoute";
 import ProtectedLink from "@/components/ProtectedLink";
 // get the pages
+import { basePath } from '@/config';
 import Home from '@/pages/Home';
 import Dashboard from '@/pages/Dashboard';
 import Chat from '@/pages/Chat';
@@ -22,7 +23,7 @@ function App() {
           {/* Logo and brand */}
           <Navbar.Brand as="div" className="d-flex align-items-center">
             <a href="https://github.com/kstrassheim/ultimate-web-stack" target="_blank" data-testid="logo-link" className="me-2">
-              <img src={`${import.meta.env.BASE_URL}logo.png`} height="30" className="d-inline-block align-top" alt="logo" data-testid="logo-image" />
+              <img src={`${basePath}logo.png`} height="30" className="d-inline-block align-top" alt="logo" data-testid="logo-image" />
             </a>
             {document.title}
           </Navbar.Brand>
