@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router';
 import { MsalProvider } from '@azure/msal-react';
 import msalInstance, { msalInitialization } from '@/auth/msalInstance';
+import { basePath } from '@/config';
 import 'bootstrap/dist/css/bootstrap.min.css';  // Add this line
 
 import App from './App';
@@ -28,7 +29,7 @@ if (isAuthRedirectFrame) {
   msalInitialization.then(() => {
     ReactDOM.createRoot(document.getElementById('root')).render(
       <React.StrictMode>
-        <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/+$/, '') || '/'}>
+        <BrowserRouter basename={basePath.replace(/\/+$/, '') || '/'}>
           <MsalProvider instance={msalInstance}>
             <App />
           </MsalProvider>

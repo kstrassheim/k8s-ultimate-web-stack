@@ -83,6 +83,8 @@ class FutureGadgetLabDataService:
     def create_experiment(self, experiment_data: Dict) -> Dict:
         prepared = self._prepare_experiment_payload(experiment_data)
         self._db.experiments.insert_one(prepared)
+        # insert_one adds a non-JSON-serializable _id in place; drop it.
+        prepared.pop("_id", None)
         return prepared
 
     def update_experiment(self, experiment_id: str, experiment_data: Dict) -> Optional[Dict]:
@@ -108,6 +110,8 @@ class FutureGadgetLabDataService:
     def create_divergence_reading(self, reading_data: Dict) -> Dict:
         prepared = self._prepare_divergence_payload(reading_data)
         self._db.divergence_readings.insert_one(prepared)
+        # insert_one adds a non-JSON-serializable _id in place; drop it.
+        prepared.pop("_id", None)
         return prepared
 
     def update_divergence_reading(self, reading_id: str, reading_data: Dict) -> Optional[Dict]:

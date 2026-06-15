@@ -13,7 +13,7 @@ if (!global.TextDecoder) {
 }
 
 
-global.import = { meta: { env: { MODE: 'test', PROD: false, DEV: false } } };
+global.import = { meta: { env: { MODE: 'test', PROD: false, DEV: false, BASE_URL: '/' } } };
 
 // Create a mock MSAL instance using the full implementation
 const mockMsalInstance = new PublicClientApplication({

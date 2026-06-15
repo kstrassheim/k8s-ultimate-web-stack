@@ -1,5 +1,5 @@
 import { LogLevel } from '@azure/msal-browser';
-import { frontendUrl } from "@/config";
+import { frontendUrl, basePath } from "@/config";
 import tfconfig from '@/../terraform.config.json';
 import appInsights from '@/log/appInsights';
 
@@ -8,7 +8,7 @@ import appInsights from '@/log/appInsights';
 // https://datapi.galaxus.box/ultimate-web-stack-dev/), which is what is
 // registered on the Entra app reg. Falls back to frontendUrl outside the browser.
 const appRedirectUri = (typeof window !== 'undefined')
-  ? window.location.origin + import.meta.env.BASE_URL
+  ? window.location.origin + basePath
   : frontendUrl;
 
 export const msalConfig = () =>{
