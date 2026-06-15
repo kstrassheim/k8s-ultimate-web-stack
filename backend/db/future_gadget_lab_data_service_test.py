@@ -39,8 +39,8 @@ def db_service():
 def test_initialization(db_service):
     """Test that the database is initialized with sample data"""
     # Check if tables were created and populated
-    assert len(db_service.experiments_table) >= 0
-    assert len(db_service.divergence_readings_table) >= 0
+    assert db_service.experiments_table.count_documents({}) >= 0
+    assert db_service.divergence_readings_table.count_documents({}) >= 0
     
     # Verify tables exist
     assert hasattr(db_service, 'experiments_table')
@@ -229,8 +229,8 @@ def test_divergence_reading_crud(db_service):
 def test_generate_test_data(db_service):
     """Test that generate_test_data correctly populates the database with sample data"""
     # Make sure we start with empty tables
-    db_service.experiments_table.truncate()
-    db_service.divergence_readings_table.truncate()
+    db_service.experiments_table.delete_many({})
+    db_service.divergence_readings_table.delete_many({})
     
     # Verify tables are empty
     assert len(db_service.get_all_experiments()) == 0
