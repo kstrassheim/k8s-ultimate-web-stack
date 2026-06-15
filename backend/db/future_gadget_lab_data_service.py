@@ -32,44 +32,30 @@ class FutureGadgetLabDataService:
         self,
         mongodb_uri: Optional[str] = None,
         mongodb_db: Optional[str] = None,
+        client: Optional[MongoClient] = None,
     ) -> None:
         self.mongodb_uri = mongodb_uri
-        self.mongodb_db_name = mongodb_db
-        self._mongo_client = None
+        self.mongodb_db_name = mongodb_db or "future_gadget_lab"
+        self._mongo_client = client
         self._db = None
         self._initialize_db()
 
     def _initialize_db(self) -> None:
         """Initialize MongoDB backing storage."""
-        if not self.mongodb_uri:
-            # Fall back to tinydb for local dev without MongoDB
-            from tinydb import TinyDB
-            self._db = TinyDB("./data/fgl_data.json")
-            self._experiments = self._db.table("experiments")
-            self._readings = self._db.table("divergence_readings")
-            self.storage_backend = "tinydb"
-            logger.info("Using TinyDB (no MONGODB_URI provided)")
-            return
-
-        try:
+        if self._mongo_client is None:
+            if not self.mongodb_uri:
+                raise RuntimeError("MONGODB_URI is required (MongoDB is the only supported backend)")
             self._mongo_client = MongoClient(self.mongodb_uri)
             # Ping to verify connection
             self._mongo_client.admin.command('ping')
-            self._db = self._mongo_client[self.mongodb_db_name]
-            self.storage_backend = "mongodb"
-            logger.info("Using MongoDB at %s/%s", self.mongodb_uri, self.mongodb_db_name)
-            self._seed_mongodb_if_empty()
-        except PyMongoError as exc:
-            logger.error("Failed to connect to MongoDB: %s. Falling back to TinyDB.", exc)
-            from tinydb import TinyDB
-            self._db = TinyDB("./data/fgl_data.json")
-            self._experiments = self._db.table("experiments")
-            self._readings = self._db.table("divergence_readings")
-            self.storage_backend = "tinydb"
+
+        self._db = self._mongo_client[self.mongodb_db_name]
+        logger.info("Using MongoDB database %s", self.mongodb_db_name)
+        self._seed_mongodb_if_empty()
 
     def _seed_mongodb_if_empty(self) -> None:
         """Seed MongoDB with test data if empty."""
-        if self.storage_backend != "mongodb" or self._db is None:
+        if self._db is None:
             return
 
         try:
@@ -86,33 +72,17 @@ class FutureGadgetLabDataService:
     # ----- EXPERIMENT CRUD -----
 
     def get_all_experiments(self) -> List[Dict]:
-        if self.storage_backend == "mongodb":
-            return list(self._db.experiments.find({}, {"_id": 0}))
-        return self._experiments.all()
+        return list(self._db.experiments.find({}, {"_id": 0}))
 
     def get_experiment_by_id(self, experiment_id: str) -> Optional[Dict]:
-        if self.storage_backend == "mongodb":
-            return self._db.experiments.find_one({"id": experiment_id}, {"_id": 0})
-        for exp in self._experiments.all():
-            if exp.get("id") == experiment_id:
-                return exp
-        return None
+        return self._db.experiments.find_one({"id": experiment_id}, {"_id": 0})
 
     def search_experiments(self, query_params: Dict) -> List[Dict]:
-        if self.storage_backend == "mongodb":
-            return list(self._db.experiments.find(query_params, {"_id": 0}))
-        results = []
-        for exp in self._experiments.all():
-            if all(exp.get(k) == v for k, v in query_params.items()):
-                results.append(exp)
-        return results
+        return list(self._db.experiments.find(query_params, {"_id": 0}))
 
     def create_experiment(self, experiment_data: Dict) -> Dict:
         prepared = self._prepare_experiment_payload(experiment_data)
-        if self.storage_backend == "mongodb":
-            self._db.experiments.insert_one(prepared)
-            return prepared
-        self._experiments.insert(prepared)
+        self._db.experiments.insert_one(prepared)
         return prepared
 
     def update_experiment(self, experiment_id: str, experiment_data: Dict) -> Optional[Dict]:
@@ -120,45 +90,24 @@ class FutureGadgetLabDataService:
         if not existing:
             return None
         update_payload = self._prepare_experiment_update_payload(experiment_data)
-        if self.storage_backend == "mongodb":
-            self._db.experiments.update_one({"id": experiment_id}, {"$set": update_payload})
-            return self.get_experiment_by_id(experiment_id)
-        for i, exp in enumerate(self._experiments.all()):
-            if exp.get("id") == experiment_id:
-                self._experiments.update(update_payload, doc_ids=[self._experiments.all()[i].doc_id])
+        self._db.experiments.update_one({"id": experiment_id}, {"$set": update_payload})
         return self.get_experiment_by_id(experiment_id)
 
     def delete_experiment(self, experiment_id: str) -> bool:
-        if self.storage_backend == "mongodb":
-            result = self._db.experiments.delete_one({"id": experiment_id})
-            return result.deleted_count > 0
-        for i, exp in enumerate(self._experiments.all()):
-            if exp.get("id") == experiment_id:
-                self._experiments.remove(doc_ids=[exp.doc_id])
-                return True
-        return False
+        result = self._db.experiments.delete_one({"id": experiment_id})
+        return result.deleted_count > 0
 
     # ----- DIVERGENCE READINGS CRUD -----
 
     def get_all_divergence_readings(self) -> List[Dict]:
-        if self.storage_backend == "mongodb":
-            return list(self._db.divergence_readings.find({}, {"_id": 0}))
-        return self._readings.all()
+        return list(self._db.divergence_readings.find({}, {"_id": 0}))
 
     def get_divergence_reading_by_id(self, reading_id: str) -> Optional[Dict]:
-        if self.storage_backend == "mongodb":
-            return self._db.divergence_readings.find_one({"id": reading_id}, {"_id": 0})
-        for r in self._readings.all():
-            if r.get("id") == reading_id:
-                return r
-        return None
+        return self._db.divergence_readings.find_one({"id": reading_id}, {"_id": 0})
 
     def create_divergence_reading(self, reading_data: Dict) -> Dict:
         prepared = self._prepare_divergence_payload(reading_data)
-        if self.storage_backend == "mongodb":
-            self._db.divergence_readings.insert_one(prepared)
-            return prepared
-        self._readings.insert(prepared)
+        self._db.divergence_readings.insert_one(prepared)
         return prepared
 
     def update_divergence_reading(self, reading_id: str, reading_data: Dict) -> Optional[Dict]:
@@ -166,32 +115,16 @@ class FutureGadgetLabDataService:
         if not existing:
             return None
         update_payload = self._prepare_divergence_update_payload(reading_data)
-        if self.storage_backend == "mongodb":
-            self._db.divergence_readings.update_one({"id": reading_id}, {"$set": update_payload})
-            return self.get_divergence_reading_by_id(reading_id)
-        for i, r in enumerate(self._readings.all()):
-            if r.get("id") == reading_id:
-                self._readings.update(update_payload, doc_ids=[r.doc_id])
+        self._db.divergence_readings.update_one({"id": reading_id}, {"$set": update_payload})
         return self.get_divergence_reading_by_id(reading_id)
 
     def delete_divergence_reading(self, reading_id: str) -> bool:
-        if self.storage_backend == "mongodb":
-            result = self._db.divergence_readings.delete_one({"id": reading_id})
-            return result.deleted_count > 0
-        for i, r in enumerate(self._readings.all()):
-            if r.get("id") == reading_id:
-                self._readings.remove(doc_ids=[r.doc_id])
-                return True
-        return False
+        result = self._db.divergence_readings.delete_one({"id": reading_id})
+        return result.deleted_count > 0
 
     def get_latest_divergence_reading(self) -> Optional[Dict]:
-        if self.storage_backend == "mongodb":
-            readings = list(self._db.divergence_readings.find({}, {"_id": 0}).sort("timestamp", -1).limit(1))
-            return readings[0] if readings else None
-        readings = self._readings.all()
-        if not readings:
-            return None
-        return sorted(readings, key=lambda x: x.get("timestamp", ""), reverse=True)[0]
+        readings = list(self._db.divergence_readings.find({}, {"_id": 0}).sort("timestamp", -1).limit(1))
+        return readings[0] if readings else None
 
     # ----- HELPERS -----
 
@@ -218,11 +151,8 @@ class FutureGadgetLabDataService:
     def _prepare_divergence_payload(self, reading_data: Dict) -> Dict:
         payload = reading_data.copy()
         if "id" not in payload:
-            if self.storage_backend == "mongodb":
-                count = self._db.divergence_readings.count_documents({})
-                payload["id"] = f"DR-{count + 1:03d}"
-            else:
-                payload["id"] = f"DR-{uuid.uuid4()}"
+            count = self._db.divergence_readings.count_documents({})
+            payload["id"] = f"DR-{count + 1:03d}"
         if "timestamp" not in payload:
             payload["timestamp"] = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
         if "reading" in payload and isinstance(payload["reading"], str):

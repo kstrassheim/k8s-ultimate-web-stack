@@ -17,7 +17,7 @@ from common.config import mock_enabled, tfconfig
 future_gadget_api_router = APIRouter(tags=["Future Gadget Lab"])
 
 # Initialize data service based on environment
-# Priority: MONGODB_URI env var > mock (TinyDB) for local dev
+# Priority: MONGODB_URI env var > mock (mongomock) for local dev
 import os
 
 mongodb_uri = os.environ.get("MONGODB_URI")
@@ -30,7 +30,7 @@ if mongodb_uri:
         mongodb_db=mongodb_db,
     )
 elif mock_enabled:
-    # Use TinyDB for local dev mock mode
+    # Use mongomock for local dev mock mode
     from mock.mock_future_gadget_lab_data_service import MockFutureGadgetLabDataService
     fgl_service = MockFutureGadgetLabDataService()
 else:

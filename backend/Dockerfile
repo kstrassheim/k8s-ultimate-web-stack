@@ -33,7 +33,7 @@ COPY backend/requirements.txt /app/
 RUN pip install --no-cache-dir --break-system-packages -r requirements.txt
 
 # Remove Cosmos/TinyDB-related deps; add MongoDB
-RUN pip uninstall -y azure-cosmos tinydb opencensus-ext-azure opencensus-ext-fastapi 2>/dev/null || true \
+RUN pip uninstall -y azure-cosmos opencensus-ext-azure opencensus-ext-fastapi 2>/dev/null || true \
     && pip install --no-cache-dir --break-system-packages \
     pymongo==4.10.1 \
     opentelemetry-api \
