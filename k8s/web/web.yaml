@@ -31,6 +31,13 @@ spec:
       labels:
         app: web
     spec:
+      # Out-of-band dockerconfigjson for the in-cluster registry (per namespace),
+      # same pattern as the other cluster projects. Create with:
+      #   kubectl create secret docker-registry registry-pull-secret \
+      #     --docker-server=mainpi.local:5000 --docker-username=admin \
+      #     --docker-password=<pw> -n <namespace>
+      imagePullSecrets:
+        - name: registry-pull-secret
       containers:
         - name: web
           # FastAPI backend that also serves the React SPA from ./dist

@@ -11,8 +11,11 @@ name: Build & Push Image
 #   push prod      -> :test  (+ :sha-<short>)  -> ultimate-web-stack-test
 #   push tag vX.Y  -> :prod  (+ :vX.Y.Z)       -> ultimate-web-stack
 #
-# The runner injects REGISTRY_URL / REGISTRY_USERNAME / REGISTRY_PASSWORD via
-# the `registry-creds` secret and already trusts the registry CA.
+# The runner injects REGISTRY_USERNAME / REGISTRY_PASSWORD via the
+# `registry-creds` secret and already trusts the registry CA. We push to
+# mainpi.local:5000 (not REGISTRY_URL=mainpi.galaxus.box:5000): in-cluster,
+# CoreDNS rewrites mainpi.local -> the registry Service, and that host matches
+# both the TLS cert and the image refs the deployments pull.
 
 on:
   push:
@@ -33,7 +36,7 @@ jobs:
         id: meta
         run: |
           set -euo pipefail
-          repo="${REGISTRY_URL}/ultimate-web-stack/web"
+          repo="mainpi.local:5000/ultimate-web-stack/web"
           short_sha="${GITHUB_SHA::7}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             tags="${repo}:prod ${repo}:${GITHUB_REF_NAME}"
@@ -50,7 +53,7 @@ jobs:
 
       - name: Log in to registry
         run: |
-          echo "$REGISTRY_PASSWORD" | docker login "$REGISTRY_URL" \
+          echo "$REGISTRY_PASSWORD" | docker login mainpi.local:5000 \
             --username "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build image
