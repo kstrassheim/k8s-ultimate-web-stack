@@ -31,6 +31,10 @@ jobs:
     environment: ${{ github.base_ref == 'prod' && 'test' || 'dev' }}
     env:
       TF_ENV: ${{ github.base_ref == 'prod' && 'test' || 'dev' }}
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     concurrency:
       group: terraform-app-reg-${{ github.base_ref == 'prod' && 'test' || 'dev' }}
       cancel-in-progress: false
@@ -58,11 +62,6 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform
-        env:
-          ARM_FEDERATED_TOKEN_FILE: ${{ runner.temp }}/azure_federated_token
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
 
       - name: Terraform Plan

@@ -34,6 +34,11 @@ jobs:
     environment: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
     env:
       TF_ENV: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
+      # azurerm provider + backend authenticate via the GitHub OIDC token.
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
     # Per-env state; serialize same-env runs (and the standalone plan workflow).
     concurrency:
       group: terraform-app-reg-${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
@@ -56,29 +61,14 @@ jobs:
 
       - name: Terraform Init
         working-directory: terraform
-        env:
-          ARM_FEDERATED_TOKEN_FILE: ${{ runner.temp }}/azure_federated_token
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
 
       - name: Terraform Apply
         working-directory: terraform
-        env:
-          ARM_FEDERATED_TOKEN_FILE: ${{ runner.temp }}/azure_federated_token
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: terraform apply -auto-approve -no-color -var="env=${TF_ENV}"
 
       - name: Export config
         working-directory: terraform
-        env:
-          ARM_FEDERATED_TOKEN_FILE: ${{ runner.temp }}/azure_federated_token
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: terraform output -json > terraform.config.json
 
       - name: Upload config artifact
