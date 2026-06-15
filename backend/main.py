@@ -119,7 +119,13 @@ async def frontend_handler(path: str):
     elif path.endswith(".json"):
         media_type = "application/json"
 
-    return FileResponse(fp, media_type=media_type)
+    # index.html (also the SPA fallback) must not be cached, or browsers keep
+    # loading a stale bundle after a deploy. Hashed assets stay cacheable.
+    headers = {}
+    if fp == _index_html:
+        headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+
+    return FileResponse(fp, media_type=media_type, headers=headers)
 
 app.include_router(frontend_router, prefix="")
 
