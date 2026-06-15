@@ -1,0 +1,128 @@
+name: Build & Push Image
+
+# Two jobs, because terraform must run on a GitHub-hosted runner (the in-cluster
+# self-hosted runner can't reliably reach registry.terraform.io to download
+# providers), while the image build/push must run on the in-cluster runner
+# (docker-in-docker + access to the mainpi registry).
+#
+# Prod approval: the terraform-config job is the only one with `environment`,
+# so adding a required reviewer on the `prod` environment gates the whole
+# deployment with a single approval (build-push runs after it).
+#
+#   push main      -> dev  : :dev   (+ :sha-<short>)  -> ultimate-web-stack-dev
+#   push prod      -> test : :test  (+ :sha-<short>)  -> ultimate-web-stack-test
+#   push tag vX.Y  -> prod : :prod  (+ :vX.Y.Z)       -> ultimate-web-stack
+
+on:
+  push:
+    branches:
+      - main
+      - prod
+    tags:
+      - 'v*'
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform-config:
+    name: Terraform apply + config
+    runs-on: ubuntu-latest
+    # Per-ref environment (and its federated AZURE_CLIENT_ID). Add a required
+    # reviewer on the `prod` environment to gate prod deployments (one approval).
+    environment: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
+    env:
+      TF_ENV: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    concurrency:
+      group: terraform-app-reg-${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: Terraform apply + export config
+        working-directory: terraform
+        run: |
+          set -euo pipefail
+          terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
+          terraform apply -auto-approve -no-color -var="env=${TF_ENV}"
+          terraform output -json > terraform.config.json
+
+      - name: Upload config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-terraform-config
+          path: terraform/terraform.config.json
+          retention-days: 1
+
+  build-push:
+    name: Build & push web image
+    needs: terraform-config
+    runs-on: arc-runner-scale-k8s-ultimate-web-stack
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch terraform config
+        uses: actions/download-artifact@v4
+        with:
+          name: web-terraform-config
+          path: _tfconfig
+
+      - name: Place config for build (frontend build + backend runtime)
+        run: |
+          set -euo pipefail
+          cp _tfconfig/terraform.config.json frontend/terraform.config.json
+          cp _tfconfig/terraform.config.json backend/terraform.config.json
+
+      - name: Compute image tags + base path
+        id: meta
+        run: |
+          set -euo pipefail
+          # In-cluster, CoreDNS rewrites mainpi.local -> the registry Service;
+          # this host matches the TLS cert and the image refs the deploys pull.
+          repo="mainpi.local:5000/ultimate-web-stack/web"
+          short_sha="${GITHUB_SHA::7}"
+          # base = the ingress sub-path the SPA is served under per env.
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            tags="${repo}:prod ${repo}:${GITHUB_REF_NAME}"; base="/ultimate-web-stack/"
+          elif [[ "$GITHUB_REF" == refs/heads/main ]]; then
+            tags="${repo}:dev ${repo}:sha-${short_sha}"; base="/ultimate-web-stack-dev/"
+          elif [[ "$GITHUB_REF" == refs/heads/prod ]]; then
+            tags="${repo}:test ${repo}:sha-${short_sha}"; base="/ultimate-web-stack-test/"
+          else
+            echo "Ref $GITHUB_REF is not a release ref; nothing to build."
+            exit 1
+          fi
+          echo "tags=${tags}" >> "$GITHUB_OUTPUT"
+          echo "base=${base}" >> "$GITHUB_OUTPUT"
+          echo "Tags: ${tags}  Base: ${base}"
+
+      - name: Log in to registry
+        run: |
+          echo "$REGISTRY_PASSWORD" | docker login mainpi.local:5000 \
+            --username "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Build image
+        run: |
+          set -euo pipefail
+          tag_args=""
+          for t in ${{ steps.meta.outputs.tags }}; do tag_args="${tag_args} -t ${t}"; done
+          docker build ${tag_args} --build-arg BASE_PATH="${{ steps.meta.outputs.base }}" -f backend/Dockerfile .
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          for t in ${{ steps.meta.outputs.tags }}; do
+            docker push "${t}"
+          done

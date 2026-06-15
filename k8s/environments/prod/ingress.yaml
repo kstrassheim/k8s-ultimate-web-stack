@@ -1,0 +1,37 @@
+# https://datapi.galaxus.box/ultimate-web-stack -> web:8000
+# The (/|$) anchor keeps this from matching the -dev / -test paths.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    cert-manager.io/cluster-issuer: mainpi-ca
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: datapi.galaxus.box
+      http:
+        paths:
+          - path: /ultimate-web-stack(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+    - host: datapi.local
+      http:
+        paths:
+          - path: /ultimate-web-stack(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: web
+                port:
+                  name: http

@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  labels:
+    app: web
+    app.kubernetes.io/managed-by: argocd
+spec:
+  selector:
+    app: web
+  ports:
+    - port: 8000
+      targetPort: 8000
+      name: http
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  labels:
+    app: web
+    app.kubernetes.io/managed-by: argocd
+spec:
+  # 1 replica: chat/experiments/worldline broadcasts use an in-memory per-pod
+  # connection list, so multiple replicas can't see each other's WS clients.
+  # Scaling >1 would need a pub/sub backplane (e.g. Redis).
+  replicas: 1
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      # Out-of-band dockerconfigjson for the in-cluster registry (per namespace),
+      # same pattern as the other cluster projects. Create with:
+      #   kubectl create secret docker-registry registry-pull-secret \
+      #     --docker-server=mainpi.local:5000 --docker-username=admin \
+      #     --docker-password=<pw> -n <namespace>
+      imagePullSecrets:
+        - name: registry-pull-secret
+      containers:
+        - name: web
+          # FastAPI backend that also serves the React SPA from ./dist
+          image: mainpi.local:5000/ultimate-web-stack/web:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: MONGODB_URI
+              value: mongodb://mongodb:27017
+            - name: MONGODB_DB
+              value: future_gadget_lab
+            - name: MOCK
+              value: "false"
+            - name: PYTHONPATH
+              value: /app
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          # /health calls psutil.cpu_percent(interval=1), which blocks ~1s, so
+          # the probe timeout must exceed that (default timeoutSeconds=1 fails).
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5

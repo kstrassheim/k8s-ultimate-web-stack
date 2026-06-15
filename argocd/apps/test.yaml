@@ -1,0 +1,26 @@
+# ==============================
+# TEST — syncs from the prod branch into ultimate-web-stack-test
+# ==============================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ultimate-web-stack-test
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ultimate-web-stack
+  source:
+    repoURL: https://github.com/kstrassheim/k8s-ultimate-web-stack.git
+    targetRevision: prod
+    path: k8s/environments/test
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ultimate-web-stack-test
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

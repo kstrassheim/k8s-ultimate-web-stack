@@ -1,0 +1,30 @@
+# ==============================
+# ArgoCD Project
+# ==============================
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: ultimate-web-stack
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  description: Ultimate Web Stack on the mainpi k8s cluster (dev / test / prod)
+  sourceRepos:
+    - https://github.com/kstrassheim/k8s-ultimate-web-stack.git
+    - https://github.com/kstrassheim/k8s-ultimate-web-stack
+  destinations:
+    - namespace: ultimate-web-stack-dev
+      server: https://kubernetes.default.svc
+    - namespace: ultimate-web-stack-test
+      server: https://kubernetes.default.svc
+    - namespace: ultimate-web-stack
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: ""
+      kind: Namespace
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

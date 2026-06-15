@@ -1,0 +1,28 @@
+# ==============================
+# ArgoCD App-of-Apps bootstrap
+# Watches argocd/apps/ and manages the dev / test / prod Applications.
+# ==============================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ultimate-web-stack-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: ultimate-web-stack
+  source:
+    repoURL: https://github.com/kstrassheim/k8s-ultimate-web-stack.git
+    targetRevision: main
+    path: argocd/apps
+    directory:
+      recurse: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
