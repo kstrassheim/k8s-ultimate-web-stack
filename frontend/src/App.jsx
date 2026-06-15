@@ -22,7 +22,7 @@ function App() {
           {/* Logo and brand */}
           <Navbar.Brand as="div" className="d-flex align-items-center">
             <a href="https://github.com/kstrassheim/ultimate-web-stack" target="_blank" data-testid="logo-link" className="me-2">
-              <img src='logo.png' height="30" className="d-inline-block align-top" alt="logo" data-testid="logo-image" />
+              <img src={`${import.meta.env.BASE_URL}logo.png`} height="30" className="d-inline-block align-top" alt="logo" data-testid="logo-image" />
             </a>
             {document.title}
           </Navbar.Brand>

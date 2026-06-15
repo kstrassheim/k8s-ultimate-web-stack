@@ -78,3 +78,12 @@ resource "azuread_service_principal" "enterprise" {
   client_id                    = azuread_application.reg.client_id
   app_role_assignment_required = true
 }
+
+# Application ID URI (api://<client_id>) so the SPA can request the API scope
+# api://<client_id>/user_impersonation. Managed separately because the app
+# resource ignores identifier_uris changes (the URI references the client_id,
+# which only exists after creation).
+resource "azuread_application_identifier_uri" "api" {
+  application_id = azuread_application.reg.id
+  identifier_uri = "api://${azuread_application.reg.client_id}"
+}
