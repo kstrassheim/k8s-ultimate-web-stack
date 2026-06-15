@@ -4,14 +4,21 @@ import tfconfig from '@/../terraform.config.json';
 import appInsights from '@/log/appInsights';
 
 
+// Redirect URI = the deployed origin + sub-path (e.g.
+// https://datapi.galaxus.box/ultimate-web-stack-dev/), which is what is
+// registered on the Entra app reg. Falls back to frontendUrl outside the browser.
+const appRedirectUri = (typeof window !== 'undefined')
+  ? window.location.origin + import.meta.env.BASE_URL
+  : frontendUrl;
+
 export const msalConfig = () =>{
-  console.log("redirect uri:" + frontendUrl);
+  console.log("redirect uri:" + appRedirectUri);
   return {
     auth: {
       clientId: tfconfig.client_id.value,
       authority: `https://login.microsoftonline.com/${tfconfig.tenant_id.value}/v2.0`,
-      redirectUri: frontendUrl,
-      postLogoutRedirectUri: frontendUrl+'/post-logout',
+      redirectUri: appRedirectUri,
+      postLogoutRedirectUri: appRedirectUri,
     },
     cache: {
       cacheLocation: 'localStorage',
@@ -30,7 +37,8 @@ export const msalConfig = () =>{
 
 
 export const loginRequest = {
-  scopes: tfconfig.requested_graph_api_delegated_permissions.value,
+  // Not part of the trimmed k8s terraform output; default to a basic Graph scope.
+  scopes: tfconfig.requested_graph_api_delegated_permissions?.value ?? ['User.Read'],
 };
 
 export const retrieveTokenForBackend = async (instance, extraScopes = []) => {
