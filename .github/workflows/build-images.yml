@@ -1,21 +1,19 @@
 name: Build & Push Image
 
-# Builds the web image (FastAPI backend that also serves the React SPA) on the
-# in-cluster self-hosted runner (docker-in-docker) and pushes it to the mainpi
-# registry. No git write-back and no cluster credentials are needed: ArgoCD
-# auto-syncs the manifests, and the deployment uses imagePullPolicy: Always, so
-# the channel tag is re-pulled when pods restart (same pattern as the other
-# cluster projects).
+# 1. terraform-config: terraform apply (Azure OIDC) provisions the Entra App Reg
+#    for the target environment and emits terraform.config.json (SPA + backend
+#    auth config). Environment / federated AZURE_CLIENT_ID are selected by ref:
+#      main -> dev, prod branch -> test, vX.Y.Z tag -> prod
+# 2. build-push: on the in-cluster self-hosted runner (docker-in-docker), builds
+#    the web image (FastAPI backend that also serves the React SPA, with the
+#    real Entra config baked in) and pushes it to the mainpi registry.
 #
 #   push main      -> :dev   (+ :sha-<short>)  -> ultimate-web-stack-dev
 #   push prod      -> :test  (+ :sha-<short>)  -> ultimate-web-stack-test
 #   push tag vX.Y  -> :prod  (+ :vX.Y.Z)       -> ultimate-web-stack
 #
-# The runner injects REGISTRY_USERNAME / REGISTRY_PASSWORD via the
-# `registry-creds` secret and already trusts the registry CA. We push to
-# mainpi.local:5000 (not REGISTRY_URL=mainpi.galaxus.box:5000): in-cluster,
-# CoreDNS rewrites mainpi.local -> the registry Service, and that host matches
-# both the TLS cert and the image refs the deployments pull.
+# ArgoCD auto-syncs the manifests; the deployment uses imagePullPolicy: Always,
+# so the channel tag is re-pulled when pods restart.
 
 on:
   push:
@@ -25,17 +23,97 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
+  terraform-config:
+    name: Terraform apply + config
+    runs-on: ubuntu-latest
+    environment: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
+    env:
+      TF_ENV: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
+    # Per-env state; serialize same-env runs (and the standalone plan workflow).
+    concurrency:
+      group: terraform-app-reg-${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: Azure Login via OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Terraform Init
+        working-directory: terraform
+        env:
+          ARM_FEDERATED_TOKEN_FILE: ${{ runner.temp }}/azure_federated_token
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
+
+      - name: Terraform Apply
+        working-directory: terraform
+        env:
+          ARM_FEDERATED_TOKEN_FILE: ${{ runner.temp }}/azure_federated_token
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: terraform apply -auto-approve -no-color -var="env=${TF_ENV}"
+
+      - name: Export config
+        working-directory: terraform
+        env:
+          ARM_FEDERATED_TOKEN_FILE: ${{ runner.temp }}/azure_federated_token
+          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: terraform output -json > terraform.config.json
+
+      - name: Upload config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-terraform-config
+          path: terraform/terraform.config.json
+          retention-days: 1
+
   build-push:
+    name: Build & push web image
+    needs: terraform-config
     runs-on: arc-runner-scale-k8s-ultimate-web-stack
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Fetch terraform config
+        uses: actions/download-artifact@v4
+        with:
+          name: web-terraform-config
+          path: _tfconfig
+
+      - name: Place config for build (frontend build + backend runtime)
+        run: |
+          set -euo pipefail
+          cp _tfconfig/terraform.config.json frontend/terraform.config.json
+          cp _tfconfig/terraform.config.json backend/terraform.config.json
+
       - name: Compute image tags
         id: meta
         run: |
           set -euo pipefail
+          # In-cluster, CoreDNS rewrites mainpi.local -> the registry Service;
+          # this host matches the TLS cert and the image refs the deploys pull.
           repo="mainpi.local:5000/ultimate-web-stack/web"
           short_sha="${GITHUB_SHA::7}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
@@ -61,8 +139,6 @@ jobs:
           set -euo pipefail
           tag_args=""
           for t in ${{ steps.meta.outputs.tags }}; do tag_args="${tag_args} -t ${t}"; done
-          # Build context is the repo root; the Dockerfile builds the SPA and
-          # bundles it into the backend image.
           docker build ${tag_args} -f backend/Dockerfile .
 
       - name: Push image

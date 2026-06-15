@@ -10,7 +10,9 @@ WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json* /fe/
 RUN npm ci --legacy-peer-deps
 COPY frontend/ /fe/
-RUN npm run build
+# CI provides frontend/terraform.config.json (real Entra output) before build.
+# Override outDir to /fe/dist (vite.config.js points it at ../backend/dist).
+RUN npm run build -- --outDir dist --emptyOutDir
 
 # ---- Stage 2: backend + bundled SPA ----
 FROM python:3.12-slim
