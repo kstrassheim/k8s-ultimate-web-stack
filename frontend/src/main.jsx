@@ -28,7 +28,7 @@ if (isAuthRedirectFrame) {
   msalInitialization.then(() => {
     ReactDOM.createRoot(document.getElementById('root')).render(
       <React.StrictMode>
-        <BrowserRouter>
+        <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/+$/, '') || '/'}>
           <MsalProvider instance={msalInstance}>
             <App />
           </MsalProvider>
