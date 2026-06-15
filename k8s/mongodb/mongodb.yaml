@@ -52,22 +52,21 @@ spec:
             limits:
               cpu: "1"
               memory: 1Gi
+          # TCP checks: `mongosh` startup exceeds the probe timeout on the
+          # ARM node, so an exec ping flaps and kubelet kills mongod.
           livenessProbe:
-            exec:
-              command:
-                - mongosh
-                - --eval
-                - "db.adminCommand('ping')"
+            tcpSocket:
+              port: 27017
             initialDelaySeconds: 30
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
           readinessProbe:
-            exec:
-              command:
-                - mongosh
-                - --eval
-                - "db.adminCommand('ping')"
+            tcpSocket:
+              port: 27017
             initialDelaySeconds: 10
             periodSeconds: 5
+            timeoutSeconds: 5
   volumeClaimTemplates:
     - metadata:
         name: mongodb-data
