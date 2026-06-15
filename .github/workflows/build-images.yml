@@ -19,7 +19,8 @@ on:
       - main
       - prod
     tags:
-      - 'v*'
+      - 'v*'        # vX.Y.Z
+      - '[0-9]*'    # bare semver, e.g. 0.8 / 1.2.3
 
 permissions:
   id-token: write
