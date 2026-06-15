@@ -20,11 +20,20 @@ permissions:
   id-token: write
   contents: read
 
+# Apply now runs in build-images.yml (the deploy pipeline); this workflow only
+# plans on PRs. Per-env concurrency (job level) keeps plan off an in-flight apply.
+
 jobs:
   terraform-plan:
     name: Terraform Plan
     runs-on: ubuntu-latest
-    environment: dev
+    # PR base picks the env: PR -> prod plans test, otherwise dev.
+    environment: ${{ github.base_ref == 'prod' && 'test' || 'dev' }}
+    env:
+      TF_ENV: ${{ github.base_ref == 'prod' && 'test' || 'dev' }}
+    concurrency:
+      group: terraform-app-reg-${{ github.base_ref == 'prod' && 'test' || 'dev' }}
+      cancel-in-progress: false
     permissions:
       id-token: write
       contents: read
@@ -54,11 +63,11 @@ jobs:
           ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: terraform init -backend-config="key=app-reg.tfstate"
+        run: terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
 
       - name: Terraform Plan
         working-directory: terraform
-        run: terraform plan -no-color -out=tfplan > tfplan_output.txt 2>&1 || true; terraform show -no-color tfplan >> tfplan_output.txt 2>&1 || true
+        run: terraform plan -no-color -var="env=${TF_ENV}" -out=tfplan > tfplan_output.txt 2>&1 || true; terraform show -no-color tfplan >> tfplan_output.txt 2>&1 || true
         id: tfplan
 
       - name: Upload Terraform Plan Artifact
@@ -87,62 +96,3 @@ jobs:
               issue_number: context.issue.number,
               body: '## Terraform Plan\n\n```\n' + planText + '\n```'
             });
-
-  terraform-apply:
-    name: Terraform Apply
-    runs-on: ubuntu-latest
-    environment: dev
-    permissions:
-      id-token: write
-      contents: read
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/prod') || github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.9.0
-
-      - name: Azure Login via OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Terraform Init
-        working-directory: terraform
-        env:
-          ARM_FEDERATED_TOKEN_FILE: ${{ runner.temp }}/azure_federated_token
-          ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-        run: terraform init -backend-config="key=app-reg.tfstate"
-
-      - name: Download Terraform Plan Artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: tfplan
-          path: terraform
-        continue-on-error: true
-
-      - name: Terraform Apply
-        working-directory: terraform
-        run: |
-          if [ -f tfplan ]; then
-            terraform apply -auto-approve -no-color tfplan
-          else
-            terraform apply -auto-approve -no-color
-          fi
-
-      - name: Upload Terraform Output
-        if: github.ref == 'refs/heads/prod'
-        working-directory: terraform
-        run: terraform output -json > terraform_output.json
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-config
-          path: terraform/terraform_output.json
-          retention-days: 7
