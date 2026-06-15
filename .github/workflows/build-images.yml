@@ -1,16 +1,14 @@
 name: Build & Push Image
 
-# 1. terraform-config: terraform apply (Azure OIDC) provisions the Entra App Reg
-#    for the target environment and emits terraform.config.json (SPA + backend
-#    auth config). Environment / federated AZURE_CLIENT_ID are selected by ref:
-#      main -> dev, prod branch -> test, vX.Y.Z tag -> prod
-# 2. build-push: on the in-cluster self-hosted runner (docker-in-docker), builds
-#    the web image (FastAPI backend that also serves the React SPA, with the
-#    real Entra config baked in) and pushes it to the mainpi registry.
+# Single deployment job: terraform apply (Azure OIDC) provisions the Entra App
+# Reg and emits terraform.config.json, then the web image (FastAPI backend that
+# also serves the React SPA, with the real Entra config baked in) is built and
+# pushed to the mainpi registry. One job + per-ref `environment` so prod can be
+# gated with a required-reviewers approval later.
 #
-#   push main      -> :dev   (+ :sha-<short>)  -> ultimate-web-stack-dev
-#   push prod      -> :test  (+ :sha-<short>)  -> ultimate-web-stack-test
-#   push tag vX.Y  -> :prod  (+ :vX.Y.Z)       -> ultimate-web-stack
+#   push main      -> dev  : :dev   (+ :sha-<short>)  -> ultimate-web-stack-dev
+#   push prod      -> test : :test  (+ :sha-<short>)  -> ultimate-web-stack-test
+#   push tag vX.Y  -> prod : :prod  (+ :vX.Y.Z)       -> ultimate-web-stack
 #
 # ArgoCD auto-syncs the manifests; the deployment uses imagePullPolicy: Always,
 # so the channel tag is re-pulled when pods restart.
@@ -28,18 +26,19 @@ permissions:
   contents: read
 
 jobs:
-  terraform-config:
-    name: Terraform apply + config
-    runs-on: ubuntu-latest
+  deploy:
+    name: Terraform + build + push
+    runs-on: arc-runner-scale-k8s-ultimate-web-stack
+    # Per-ref environment (and its federated AZURE_CLIENT_ID). Add a required
+    # reviewer on the `prod` environment to gate prod deployments.
     environment: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
     env:
       TF_ENV: ${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
-      # azurerm provider + backend authenticate via the GitHub OIDC token.
+      # azurerm provider/backend authenticate via the GitHub OIDC token (no az CLI).
       ARM_USE_OIDC: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-    # Per-env state; serialize same-env runs (and the standalone plan workflow).
     concurrency:
       group: terraform-app-reg-${{ github.ref == 'refs/heads/main' && 'dev' || github.ref == 'refs/heads/prod' && 'test' || 'prod' }}
       cancel-in-progress: false
@@ -52,53 +51,17 @@ jobs:
         with:
           terraform_version: 1.9.0
 
-      - name: Azure Login via OIDC
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Terraform Init
+      - name: Terraform apply + export config
         working-directory: terraform
-        run: terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
-
-      - name: Terraform Apply
-        working-directory: terraform
-        run: terraform apply -auto-approve -no-color -var="env=${TF_ENV}"
-
-      - name: Export config
-        working-directory: terraform
-        run: terraform output -json > terraform.config.json
-
-      - name: Upload config artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-terraform-config
-          path: terraform/terraform.config.json
-          retention-days: 1
-
-  build-push:
-    name: Build & push web image
-    needs: terraform-config
-    runs-on: arc-runner-scale-k8s-ultimate-web-stack
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Fetch terraform config
-        uses: actions/download-artifact@v4
-        with:
-          name: web-terraform-config
-          path: _tfconfig
-
-      - name: Place config for build (frontend build + backend runtime)
         run: |
           set -euo pipefail
-          cp _tfconfig/terraform.config.json frontend/terraform.config.json
-          cp _tfconfig/terraform.config.json backend/terraform.config.json
+          terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
+          terraform apply -auto-approve -no-color -var="env=${TF_ENV}"
+          # Bake the Entra config into the build (frontend build + backend runtime).
+          terraform output -json > "$GITHUB_WORKSPACE/frontend/terraform.config.json"
+          cp "$GITHUB_WORKSPACE/frontend/terraform.config.json" "$GITHUB_WORKSPACE/backend/terraform.config.json"
 
-      - name: Compute image tags
+      - name: Compute image tags + base path
         id: meta
         run: |
           set -euo pipefail
