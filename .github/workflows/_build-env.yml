@@ -20,6 +20,10 @@ on:
         description: Space-separated full image refs to build and push
         type: string
         required: true
+      rollout_namespace:
+        description: Namespace whose deploy/web to roll after push (mutable image tag)
+        type: string
+        required: true
 
 permissions:
   id-token: write
@@ -95,3 +99,18 @@ jobs:
           for t in ${{ inputs.image_tags }}; do tag_args="${tag_args} -t ${t}"; done
           docker build ${tag_args} -f backend/Dockerfile .
           for t in ${{ inputs.image_tags }}; do docker push "${t}"; done
+
+      # Image tags are mutable (web:dev/test/prod), so the manifest doesn't
+      # change and ArgoCD won't roll on its own — restart the deployment to pull
+      # the freshly-pushed image. This runs on the in-cluster runner using its
+      # ServiceAccount; RBAC to restart deploy/web is granted per namespace in
+      # k8s/base/runner-rollout-rbac.yaml. The apps ignore the restartedAt
+      # annotation so this doesn't fight selfHeal.
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+      - name: Roll out new image
+        run: |
+          set -euo pipefail
+          ns="${{ inputs.rollout_namespace }}"
+          kubectl rollout restart deployment/web -n "$ns"
+          kubectl rollout status  deployment/web -n "$ns" --timeout=300s

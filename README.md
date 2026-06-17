@@ -104,34 +104,26 @@ and builds + pushes the `web` image on every push. The runner already trusts
 the registry CA and gets credentials from the `registry-creds` secret, so no
 setup is needed.
 
-`main` is the dev channel; releases are **git tags**. test and prod both track
-the latest semver tag (ArgoCD `targetRevision: "*"`), so one tag promotes through
-both — test immediately, prod after approval:
+`main` is the dev channel; releases are **git tags / GitHub Releases**. Each env
+has a mutable channel tag; CI builds it from the release commit and restarts the
+deployment to pull it (ArgoCD can't roll a same-tag image, so the build job does
+a `kubectl rollout restart`).
 
 | Trigger | Image tag(s) | Environment | Gate |
 |---------|--------------|-------------|------|
-| push `main`       | `:dev` (+ `:sha-<sha>`) | `ultimate-web-stack-dev`  | — |
-| create tag `vX.Y.Z` | `:vX.Y.Z-test` (immutable) | `ultimate-web-stack-test` | none — rolls at once |
-| create tag `vX.Y.Z` | `:vX.Y.Z-prod` (immutable) | `ultimate-web-stack`      | GitHub `prod` environment approval |
+| push `main`         | `:dev` (+ `:sha-<sha>`) | `ultimate-web-stack-dev`  | — |
+| create release `vX.Y.Z` | `:test` | `ultimate-web-stack-test` | none — rolls at once |
+| create release `vX.Y.Z` | `:prod` | `ultimate-web-stack`      | GitHub `prod` environment approval |
 
-dev uses a mutable `:dev` tag (a rebuild needs a pod restart to pull). test/prod
-use **immutable** per-tag tags pinned into the tagged commit's overlay, so ArgoCD
-rolls each new build automatically — prod once the gated `:vX.Y.Z-prod` image is
-published. Images come from `mainpi.local:5000` (nodes trust this host via the
-cluster `registries.yaml`, so no pull secret is needed).
+Images come from `mainpi.local:5000` (nodes trust this host via the cluster
+`registries.yaml`, so no pull secret is needed).
 
-**Cutting a release:**
-
-```bash
-scripts/release.sh 0.9.0
-```
-
-This pins `web:v0.9.0-test` / `web:v0.9.0-prod` into the test/prod overlays of a
-release commit, creates tag `v0.9.0`, and pushes the tag (main is left untouched
-— the tag is the source of truth for test/prod). CI then builds the test image
-and rolls test; the prod image builds and rolls only after the `prod` GitHub
-environment is approved. Until then the prod app keeps serving the previous
-image (the rolling update waits on the unbuilt image — no downtime).
+**Cutting a release:** create a GitHub Release (or push a tag) `vX.Y.Z` — no
+script. CI builds `web:test` from that commit and rolls `ultimate-web-stack-test`
+immediately; `web:prod` is built and rolled only after the `prod` GitHub
+environment is approved (until then prod keeps serving the current image). The
+build runner restarts the deployment via a narrow Role granted in
+`k8s/rbac/runner-rollout-rbac.yaml`.
 
 To build an image by hand:
 
@@ -195,9 +187,9 @@ both track the latest semver tag**, so one tag promotes through both:
 Promotion flow:
 
 ```
-push to main          → dev rolls out
-scripts/release.sh X  → tag vX rolls out test immediately, prod after the
-                        GitHub `prod`-environment approval on its image build
+push to main             → dev rolls out
+create GitHub Release vX → test rolls out immediately, prod after the
+                           GitHub `prod`-environment approval on its image build
 ```
 
 The ArgoCD Application definitions live in `argocd/apps/` — one file per

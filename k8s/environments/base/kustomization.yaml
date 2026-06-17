@@ -16,3 +16,4 @@ resources:
   - ../../mongodb
   - ../../web
   - ../../network
+  - ../../rbac

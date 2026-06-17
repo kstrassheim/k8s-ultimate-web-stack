@@ -1,15 +1,16 @@
 name: Build & Push Image
 
-# Tag-driven promotion (one image per env, immutable tags):
-#   push main   -> dev  : web:dev (+ web:sha-<sha>)   -> ultimate-web-stack-dev
-#   create tag  -> test : web:<tag>-test (immutable)  -> ultimate-web-stack-test  (immediate)
-#               -> prod : web:<tag>-prod (immutable)  -> ultimate-web-stack       (after `prod` approval)
+# Channel tags + CI roll. Each env has a mutable image tag; CI builds it and
+# restarts the deployment to pull it (ArgoCD can't roll a same-tag image).
+#   push main       -> dev  : web:dev (+ web:sha-<sha>) -> ultimate-web-stack-dev
+#   create release  -> test : web:test                  -> ultimate-web-stack-test  (immediate)
+#                   -> prod : web:prod                  -> ultimate-web-stack       (after `prod` approval)
 #
-# The test & prod ArgoCD apps both track the latest semver tag (targetRevision
-# "*"), so creating a tag rolls test out right away; prod's image is only built
-# once the `prod` GitHub environment is approved, so it lands on prod after that.
-# Cut releases with scripts/release.sh, which pins each env's image newTag in the
-# tagged commit so ArgoCD rolls the new build automatically.
+# A "release" is just a GitHub Release / git tag (vX.Y.Z) — no script. Creating
+# one builds the test image from that commit and rolls test; the prod image is
+# built + rolled only after the `prod` GitHub environment is approved. test/prod
+# ArgoCD apps track the latest tag for manifests; the image roll is the CI
+# rollout-restart in _build-env.yml.
 
 on:
   push:
@@ -40,6 +41,7 @@ jobs:
       tf_env: dev
       gh_environment: dev
       image_tags: "mainpi.local:5000/ultimate-web-stack/web:dev mainpi.local:5000/ultimate-web-stack/web:sha-${{ github.sha }}"
+      rollout_namespace: ultimate-web-stack-dev
 
   test:
     if: startsWith(github.ref, 'refs/tags/')
@@ -48,7 +50,8 @@ jobs:
     with:
       tf_env: test
       gh_environment: test
-      image_tags: "mainpi.local:5000/ultimate-web-stack/web:${{ github.ref_name }}-test"
+      image_tags: "mainpi.local:5000/ultimate-web-stack/web:test"
+      rollout_namespace: ultimate-web-stack-test
 
   prod:
     if: startsWith(github.ref, 'refs/tags/')
@@ -57,4 +60,5 @@ jobs:
     with:
       tf_env: prod
       gh_environment: prod
-      image_tags: "mainpi.local:5000/ultimate-web-stack/web:${{ github.ref_name }}-prod"
+      image_tags: "mainpi.local:5000/ultimate-web-stack/web:prod"
+      rollout_namespace: ultimate-web-stack
