@@ -104,35 +104,43 @@ and builds + pushes the `web` image on every push. The runner already trusts
 the registry CA and gets credentials from the `registry-creds` secret, so no
 setup is needed.
 
-The channel tag (`:dev` / `:test` / `:prod`) is what each overlay references;
-an immutable tag is pushed alongside it for traceability:
+`main` is the dev channel; releases are **git tags**. test and prod both track
+the latest semver tag (ArgoCD `targetRevision: "*"`), so one tag promotes through
+both — test immediately, prod after approval:
 
-| Trigger | Channel tag | Immutable tag | Environment |
-|---------|-------------|---------------|-------------|
-| push `main`      | `:dev`  | `:sha-<short>` | `ultimate-web-stack-dev` |
-| push `prod`      | `:test` | `:sha-<short>` | `ultimate-web-stack-test` |
-| push tag `vX.Y.Z`| `:prod` | `:vX.Y.Z`      | `ultimate-web-stack` |
+| Trigger | Image tag(s) | Environment | Gate |
+|---------|--------------|-------------|------|
+| push `main`       | `:dev` (+ `:sha-<sha>`) | `ultimate-web-stack-dev`  | — |
+| create tag `vX.Y.Z` | `:vX.Y.Z-test` (immutable) | `ultimate-web-stack-test` | none — rolls at once |
+| create tag `vX.Y.Z` | `:vX.Y.Z-prod` (immutable) | `ultimate-web-stack`      | GitHub `prod` environment approval |
 
-No git write-back or cluster credentials are involved — same as the other
-projects on the cluster. ArgoCD keeps the manifests synced; pods pull from
-`mainpi.local:5000` (nodes trust this host via the cluster `registries.yaml`,
-so no per-namespace pull secret is needed) with `imagePullPolicy: Always`.
-To build by hand:
+dev uses a mutable `:dev` tag (a rebuild needs a pod restart to pull). test/prod
+use **immutable** per-tag tags pinned into the tagged commit's overlay, so ArgoCD
+rolls each new build automatically — prod once the gated `:vX.Y.Z-prod` image is
+published. Images come from `mainpi.local:5000` (nodes trust this host via the
+cluster `registries.yaml`, so no pull secret is needed).
+
+**Cutting a release:**
+
+```bash
+scripts/release.sh 0.9.0
+```
+
+This pins `web:v0.9.0-test` / `web:v0.9.0-prod` into the test/prod overlays of a
+release commit, creates tag `v0.9.0`, and pushes the tag (main is left untouched
+— the tag is the source of truth for test/prod). CI then builds the test image
+and rolls test; the prod image builds and rolls only after the `prod` GitHub
+environment is approved. Until then the prod app keeps serving the previous
+image (the rolling update waits on the unbuilt image — no downtime).
+
+To build an image by hand:
 
 ```bash
 # Single image: the Dockerfile builds the SPA and bundles it into the backend.
 docker build -t mainpi.local:5000/ultimate-web-stack/web:dev -f backend/Dockerfile .
 docker push mainpi.local:5000/ultimate-web-stack/web:dev
+# dev's tag is mutable, so roll it out:  kubectl rollout restart deploy/web -n ultimate-web-stack-dev
 ```
-
-**Cutting a prod release:** tag a commit on the `prod` branch with `vX.Y.Z` and
-push the tag. CI builds `:vX.Y.Z` + `:prod`, and ArgoCD's prod app
-(`targetRevision: "*"`) resolves the new tag and syncs.
-
-> Because the channel tag is mutable, a freshly pushed image is picked up when
-> the pod restarts. To roll it out immediately, run
-> `kubectl rollout restart deploy -n <namespace>` from a machine with cluster
-> access (e.g. `ssh mainpi.local`).
 
 ### 3. Apply k8s manifests directly (one-shot)
 

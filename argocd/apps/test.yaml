@@ -1,5 +1,10 @@
 # ==============================
-# TEST — syncs from the prod branch into ultimate-web-stack-test
+# TEST — syncs from the latest semver git tag into ultimate-web-stack-test
+#
+# Same targetRevision ('*' = highest tag) as prod, so creating a tag rolls out
+# test immediately. prod is gated separately (its image build waits on the
+# GitHub `prod` environment approval), so a tag reaches test first and only
+# lands on prod once approved. See .github/workflows/build-images.yml.
 # ==============================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
@@ -12,7 +17,7 @@ spec:
   project: ultimate-web-stack
   source:
     repoURL: https://github.com/kstrassheim/k8s-ultimate-web-stack.git
-    targetRevision: prod
+    targetRevision: "*"
     path: k8s/environments/test
   destination:
     server: https://kubernetes.default.svc
