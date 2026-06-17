@@ -19,6 +19,14 @@ on:
       - 'v*'        # vX.Y.Z
       - '[0-9]*'    # bare semver, e.g. 0.8 / 1.2.3
 
+# Canonical app URL for the automated tester (claw-code-local). It must use the
+# internal LAN ingress: it's a registered Entra redirect URI (so the bot can log
+# in) and is NOT behind Cloudflare Access. The *.futuristic.science URLs are
+# public (Cloudflare Access / Google SSO) and meant for humans — the bot has no
+# Google identity. See README "Access URLs".
+env:
+  WEBAPP_URL: "https://datapi.galaxus.box/ultimate-web-stack-dev/"
+
 permissions:
   id-token: write
   contents: read

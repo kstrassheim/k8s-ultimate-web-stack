@@ -182,26 +182,44 @@ Environment-specific settings (MongoDB URI, MOCK mode, etc.) are set via `k8s/en
 
 ### 6. Deployment model (namespaces + GitOps promotion)
 
-Each environment maps to its own namespace and its own git ref. ArgoCD
-(running in-cluster on the `mainpi` k3s cluster) reconciles each one:
+Each environment maps to its own namespace. ArgoCD (running in-cluster on the
+`mainpi` k3s cluster) reconciles each one. dev tracks `main`; **test and prod
+both track the latest semver tag**, so one tag promotes through both:
 
 | Environment | Namespace | Git ref (`targetRevision`) | Sync |
 |-------------|-----------|----------------------------|------|
 | **dev**  | `ultimate-web-stack-dev`  | `main` branch | automated (prune + self-heal) |
-| **test** | `ultimate-web-stack-test` | `prod` branch | automated (prune + self-heal) |
-| **prod** | `ultimate-web-stack`      | latest semver tag (`*`) | automated (prune + self-heal) |
+| **test** | `ultimate-web-stack-test` | latest semver tag (`*`) | automated (prune + self-heal) |
+| **prod** | `ultimate-web-stack`      | latest semver tag (`*`) | automated; image gated by `prod` approval |
 
 Promotion flow:
 
 ```
-push to main      → dev rolls out
-merge main → prod → test rolls out
-tag vX.Y.Z on prod → prod rolls out (ArgoCD resolves "*" to the newest tag)
+push to main          → dev rolls out
+scripts/release.sh X  → tag vX rolls out test immediately, prod after the
+                        GitHub `prod`-environment approval on its image build
 ```
 
 The ArgoCD Application definitions live in `argocd/apps/` — one file per
 environment (`dev.yaml`, `test.yaml`, `prod.yaml`) — managed by the
 `argocd/app-of-apps.yaml` root.
+
+#### Access URLs
+
+Each environment is reachable two ways:
+
+| Environment | Internal (LAN) — **canonical for automated testing** | Public (Cloudflare Access, humans) |
+|-------------|------------------------------------------------------|------------------------------------|
+| **dev**  | `https://datapi.galaxus.box/ultimate-web-stack-dev/`  | `https://ultimate-web-stack-dev.futuristic.science/` |
+| **test** | `https://datapi.galaxus.box/ultimate-web-stack-test/` | `https://ultimate-web-stack-test.futuristic.science/` |
+| **prod** | `https://datapi.galaxus.box/ultimate-web-stack/`      | `https://ultimate-web-stack.futuristic.science/` |
+
+The `*.futuristic.science` URLs sit behind **Cloudflare Access (Google SSO)** and
+are for human browsers only. Automated tooling (the `claw-code-local` tester) has
+no Google identity, so it must use the internal `datapi.galaxus.box` URLs — these
+are also the registered Entra redirect URIs, so the bot can complete the Microsoft
+login. The canonical dev test URL is published as `WEBAPP_URL` in
+`.github/workflows/build-images.yml`.
 
 ## Running locally (mock mode)
 
