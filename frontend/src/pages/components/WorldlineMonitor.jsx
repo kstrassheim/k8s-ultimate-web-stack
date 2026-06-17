@@ -8,7 +8,8 @@ import {
   getDivergenceReadings,
   worldlineSocket,
   formatDivergenceReading,
-  formatWorldLineChange
+  formatWorldLineChange,
+  formatWorldlineTimestamp
 } from '@/api/futureGadgetApi';
 import appInsights from '@/log/appInsights';
 import Loading from '@/components/Loading';
@@ -510,8 +511,8 @@ const WorldlineMonitor = () => {
                     </div>
                   )}
                   
-                  <div className="timestamp text-muted mt-3">
-                    Last updated: {new Date(worldlineStatus.timestamp).toLocaleString()}
+                  <div className="timestamp text-muted mt-3" data-testid="worldline-last-updated">
+                    Last updated: {formatWorldlineTimestamp(worldlineStatus.last_experiment_timestamp)}
                   </div>
                 </div>
               ) : !loading.status && (

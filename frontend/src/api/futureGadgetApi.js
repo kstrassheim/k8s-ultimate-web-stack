@@ -56,6 +56,22 @@ export const formatExperimentTimestamp = (experiment) => {
   return 'Unknown';
 };
 
+// Format the worldline "last updated" timestamp for the Current Worldline
+// Status card. The backend (`calculate_worldline_status`) returns the field
+// as `last_experiment_timestamp`; this helper is defensive against
+// missing / null / empty / unparseable values so the footer never renders
+// the literal string "Invalid Date" again.
+export const formatWorldlineTimestamp = (value) => {
+  if (value === null || value === undefined || value === '') {
+    return 'Unknown';
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown';
+  }
+  return date.toLocaleString();
+};
+
 // Format world line change to a nice readable format with +/- sign
 export const formatWorldLineChange = (change) => {
   if (change === null || change === undefined) return 'N/A';

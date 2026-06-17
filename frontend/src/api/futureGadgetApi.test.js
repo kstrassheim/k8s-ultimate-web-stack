@@ -27,6 +27,7 @@ jest.mock('@/api/socket', () => {
 import { 
   getAllExperiments, getExperimentById, createExperiment, updateExperiment, deleteExperiment,
   formatExperimentTimestamp, formatWorldLineChange, formatDivergenceReading,
+  formatWorldlineTimestamp,
   getWorldlineStatus, getWorldlineHistory, getDivergenceReadings,
   ExperimentsSocketClient, WorldlineSocketClient, 
   experimentsSocket, worldlineSocket
@@ -83,6 +84,35 @@ describe('Future Gadget Lab API', () => {
       const experiment = { name: 'No timestamp experiment' };
       const formatted = formatExperimentTimestamp(experiment);
       expect(formatted).toBe('Unknown');
+    });
+  });
+
+  describe('formatWorldlineTimestamp', () => {
+    // Regression coverage for issue #84: the "Last updated" footer in
+    // WorldlineMonitor must never render the literal "Invalid Date".
+    it('should format an ISO timestamp as a locale string', () => {
+      const formatted = formatWorldlineTimestamp('2025-04-07T12:34:56.789Z');
+      expect(formatted).not.toBe('Unknown');
+      expect(formatted).not.toMatch(/Invalid Date/);
+      expect(formatted).toContain('2025');
+    });
+
+    it('should return "Unknown" for null', () => {
+      expect(formatWorldlineTimestamp(null)).toBe('Unknown');
+    });
+
+    it('should return "Unknown" for undefined', () => {
+      expect(formatWorldlineTimestamp(undefined)).toBe('Unknown');
+    });
+
+    it('should return "Unknown" for an empty string', () => {
+      expect(formatWorldlineTimestamp('')).toBe('Unknown');
+    });
+
+    it('should return "Unknown" for an unparseable string', () => {
+      // Anything `new Date(...)` cannot parse must not surface as the
+      // literal "Invalid Date" string in the UI.
+      expect(formatWorldlineTimestamp('not a date')).toBe('Unknown');
     });
   });
   

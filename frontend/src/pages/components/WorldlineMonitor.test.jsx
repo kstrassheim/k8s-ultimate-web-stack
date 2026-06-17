@@ -9,7 +9,8 @@ import {
   getDivergenceReadings,
   worldlineSocket,
   formatDivergenceReading,
-  formatWorldLineChange
+  formatWorldLineChange,
+  formatWorldlineTimestamp
 } from '@/api/futureGadgetApi';
 import appInsights from '@/log/appInsights';
 import notyfService from '@/log/notyfService';
@@ -70,7 +71,11 @@ describe('WorldlineMonitor', () => {
     base_worldline: 1.0,
     total_divergence: 0.337192,
     experiment_count: 5,
-    timestamp: '2025-04-07T12:34:56.789Z',
+    // Field name matches the backend `calculate_worldline_status` response
+    // (see backend/db/future_gadget_lab_data_service.py). The frontend
+    // previously read this as `timestamp`, which was always undefined and
+    // produced the literal "Invalid Date" in the footer.
+    last_experiment_timestamp: '2025-04-07T12:34:56.789Z',
     closest_reading: {
       value: 1.382733,
       status: 'beta',
@@ -175,6 +180,14 @@ describe('WorldlineMonitor', () => {
     formatWorldLineChange.mockImplementation(change => 
       change >= 0 ? `+${change.toFixed(6)}` : change.toFixed(6)
     );
+    // Default: the production formatter would render a real locale string;
+    // pin it to a stable substring for assertions in the happy-path tests.
+    formatWorldlineTimestamp.mockImplementation((value) => {
+      if (value === null || value === undefined || value === '') return 'Unknown';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return 'Unknown';
+      return d.toLocaleString();
+    });
   });
   
   // Test component initial rendering and data loading
@@ -210,6 +223,57 @@ describe('WorldlineMonitor', () => {
       expect(screen.getByTestId('worldline-chart')).toBeInTheDocument();
       expect(screen.getByTestId('mock-apex-chart')).toBeInTheDocument();
     });
+  });
+
+  // Regression test for issue #84: the "Last updated" footer must not render
+  // the literal string "Invalid Date" even when the timestamp is missing or
+  // unparseable. The footer should instead render a stable fallback.
+  test('renders Last updated footer from a real timestamp without "Invalid Date"', async () => {
+    render(<WorldlineMonitor />);
+
+    const footer = await waitFor(() => screen.getByTestId('worldline-last-updated'));
+    expect(footer).toBeInTheDocument();
+    // The exact locale string is environment-dependent, but it must contain
+    // the year from the mock and MUST NOT be the literal "Invalid Date".
+    expect(footer.textContent).toContain('2025');
+    expect(footer.textContent).not.toMatch(/Invalid Date/);
+    // The component must read the backend field by its real name.
+    expect(formatWorldlineTimestamp).toHaveBeenCalledWith(
+      mockWorldlineStatus.last_experiment_timestamp
+    );
+  });
+
+  test('renders "Unknown" when the backend omits the timestamp', async () => {
+    // Backend may return a status payload with no last_experiment_timestamp
+    // (e.g. before the first experiment is recorded). The footer must not
+    // collapse to "Invalid Date" in that case.
+    getWorldlineStatus.mockResolvedValueOnce({
+      ...mockWorldlineStatus,
+      last_experiment_timestamp: null,
+    });
+
+    render(<WorldlineMonitor />);
+
+    const footer = await waitFor(() => screen.getByTestId('worldline-last-updated'));
+    expect(footer.textContent).toContain('Last updated:');
+    expect(footer.textContent).toContain('Unknown');
+    expect(footer.textContent).not.toMatch(/Invalid Date/);
+  });
+
+  test('renders "Unknown" when the timestamp is unparseable', async () => {
+    // A malformed value (anything `new Date(...)` cannot parse) must be
+    // treated as missing — the previous behavior was to render the literal
+    // "Invalid Date" in the footer. The defensive formatter catches this.
+    getWorldlineStatus.mockResolvedValueOnce({
+      ...mockWorldlineStatus,
+      last_experiment_timestamp: 'not-a-real-timestamp',
+    });
+
+    render(<WorldlineMonitor />);
+
+    const footer = await waitFor(() => screen.getByTestId('worldline-last-updated'));
+    expect(footer.textContent).toContain('Unknown');
+    expect(footer.textContent).not.toMatch(/Invalid Date/);
   });
 
   // Test chart rendering with horizontal lines (annotations)
