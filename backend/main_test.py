@@ -41,26 +41,27 @@ class TestMainModule:
             yield mock
     
     @pytest.fixture
-    def mock_path(self):
-        """Mock Path for file existence checks"""
-        with patch('main.Path') as mock_path:
-            # Make dist path return a mock
-            mock_dist = MagicMock()
-            mock_path.return_value = mock_dist
-            
-            # Setup behavior for path / "some_file"
-            def mock_div(path_str):
-                result = MagicMock()
-                # Default: files exist except index.html which we'll test separately
-                if path_str == "index.html":
-                    result.exists.return_value = False
-                else:
-                    result.exists.return_value = True
-                return result
-            
-            mock_dist.__truediv__.side_effect = mock_div
-            yield mock_path
-    
+    def served_assets(self):
+        """Pretend these asset paths exist in dist/ so the handler serves them
+        via FileResponse rather than falling back to the SPA shell."""
+        assets = {
+            "app.js": Path("/dist/app.js"),
+            "styles.css": Path("/dist/styles.css"),
+            "page.html": Path("/dist/page.html"),
+            "data.json": Path("/dist/data.json"),
+        }
+        with patch.dict("main._dist_files", assets, clear=False):
+            yield
+
+    # A minimal built index.html: the relative asset URL must resolve against
+    # the <base href> the handler injects.
+    _INDEX = (
+        '<!doctype html><html><head>\n'
+        '    <link rel="icon" href="./favicon.ico" />\n'
+        '    <script type="module" src="./assets/index.js"></script>\n'
+        '  </head><body><div id="root"></div></body></html>'
+    )
+
     def test_health_endpoint(self, mock_psutil):
         """Test the /health endpoint returns proper system information"""
         response = client.get("/health")
@@ -90,55 +91,71 @@ class TestMainModule:
         # HEAD requests don't return a body
         assert response.content == b''
     
-    def test_frontend_handler_js_file(self, mock_path, mock_file_response):
-        """Test the frontend handler with a JS file"""
-        response = client.get("/app.js")
-        
-        # Check that the right media type was passed
+    def test_frontend_handler_js_file(self, served_assets, mock_file_response):
+        """A real .js dist file is served via FileResponse with the JS media type"""
+        client.get("/app.js")
         mock_file_response.assert_called_once()
         _, kwargs = mock_file_response.call_args
         assert kwargs["media_type"] == "application/javascript"
-    
-    def test_frontend_handler_css_file(self, mock_path, mock_file_response):
-        """Test the frontend handler with a CSS file"""
-        response = client.get("/styles.css")
-        
-        # Check that the right media type was passed
+
+    def test_frontend_handler_css_file(self, served_assets, mock_file_response):
+        """A real .css dist file is served via FileResponse with the CSS media type"""
+        client.get("/styles.css")
         mock_file_response.assert_called_once()
         _, kwargs = mock_file_response.call_args
         assert kwargs["media_type"] == "text/css"
-    
-    def test_frontend_handler_html_file(self, mock_path, mock_file_response):
-        """Test the frontend handler with an HTML file"""
-        response = client.get("/page.html")
-        
-        # Check that the right media type was passed
+
+    def test_frontend_handler_html_file(self, served_assets, mock_file_response):
+        """A non-index .html dist file is served via FileResponse"""
+        client.get("/page.html")
         mock_file_response.assert_called_once()
         _, kwargs = mock_file_response.call_args
         assert kwargs["media_type"] == "text/html"
-    
-    def test_frontend_handler_json_file(self, mock_path, mock_file_response):
-        """Test the frontend handler with a JSON file"""
-        response = client.get("/data.json")
-        
-        # Check that the right media type was passed
+
+    def test_frontend_handler_json_file(self, served_assets, mock_file_response):
+        """A real .json dist file is served via FileResponse"""
+        client.get("/data.json")
         mock_file_response.assert_called_once()
         _, kwargs = mock_file_response.call_args
         assert kwargs["media_type"] == "application/json"
-    
-    def test_frontend_handler_fallback_to_index(self, mock_file_response):
-        """Test the frontend handler falls back to index.html when path doesn't exist"""
-        # Request a path that definitely doesn't exist under dist/
-        response = client.get("/this-file-does-not-exist-12345.xyz")
 
-        # FileResponse must be called with the index.html fallback
-        mock_file_response.assert_called_once()
-        args, _ = mock_file_response.call_args
-        served_path = str(args[0]) if args else ""
-        assert served_path.endswith("index.html"), (
-            f"Should have fallen back to index.html, got: {served_path}"
-        )
-    
+    def test_frontend_handler_fallback_serves_index(self):
+        """Unknown paths fall back to the SPA shell (no-store so a new deploy
+        isn't masked by a cached bundle)."""
+        with patch("main._index_text", self._INDEX):
+            response = client.get("/this-route-does-not-exist-12345")
+        assert response.status_code == 200
+        assert '<div id="root">' in response.text
+        assert "no-store" in response.headers.get("cache-control", "")
+
+    def test_index_injects_root_base_without_prefix(self):
+        """At a domain root (no X-Forwarded-Prefix, e.g. via the Cloudflare
+        tunnel) the injected base is '/' and precedes the relative assets."""
+        with patch("main._index_text", self._INDEX):
+            response = client.get("/")
+        assert '<base href="/">' in response.text
+        assert 'window.__APP_BASE__="/"' in response.text
+        assert response.text.index("<base") < response.text.index("./favicon.ico")
+
+    def test_index_injects_subpath_base_from_forwarded_prefix(self):
+        """Behind the nginx subpath ingress the injected base matches the prefix."""
+        with patch("main._index_text", self._INDEX):
+            response = client.get(
+                "/", headers={"X-Forwarded-Prefix": "/ultimate-web-stack-dev"}
+            )
+        assert '<base href="/ultimate-web-stack-dev/">' in response.text
+        assert 'window.__APP_BASE__="/ultimate-web-stack-dev/"' in response.text
+
+    def test_index_rejects_malicious_forwarded_prefix(self):
+        """X-Forwarded-Prefix is client-reachable via the tunnel; a value that
+        isn't a clean path collapses to root rather than being reflected."""
+        with patch("main._index_text", self._INDEX):
+            response = client.get(
+                "/", headers={"X-Forwarded-Prefix": '"><script>alert(1)</script>'}
+            )
+        assert "<script>alert(1)</script>" not in response.text
+        assert '<base href="/">' in response.text
+
     def test_cors_middleware_configuration(self):
         """Test that CORS middleware is configured"""
         # Instead of checking specific headers, just verify CORS middleware is active

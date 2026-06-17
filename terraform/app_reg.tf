@@ -40,16 +40,27 @@ resource "azuread_application" "reg" {
   }
 
   single_page_application {
+    # The app is reachable at two mounts per env: the internal nginx subpath
+    # (datapi.galaxus.box/ultimate-web-stack*) and the Cloudflare tunnel root
+    # (*.futuristic.science). redirectUri is origin+basePath, so both must be
+    # registered.
     redirect_uris = (
       var.env == "dev"
       ? [
         "https://datapi.galaxus.box/ultimate-web-stack-dev/",
+        "https://ultimate-web-stack-dev.futuristic.science/",
         "http://localhost:8000/",
         "http://localhost:5173/",
       ]
       : var.env == "test"
-      ? ["https://datapi.galaxus.box/ultimate-web-stack-test/"]
-      : ["https://datapi.galaxus.box/ultimate-web-stack/"]
+      ? [
+        "https://datapi.galaxus.box/ultimate-web-stack-test/",
+        "https://ultimate-web-stack-test.futuristic.science/",
+      ]
+      : [
+        "https://datapi.galaxus.box/ultimate-web-stack/",
+        "https://ultimate-web-stack.futuristic.science/",
+      ]
     )
   }
 

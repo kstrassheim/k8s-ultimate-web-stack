@@ -1,9 +1,11 @@
 import psutil
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pathlib import Path
 import datetime
+import json
+import re
 
 from os import environ as os_environ
 from dotenv import load_dotenv
@@ -96,18 +98,50 @@ def _enumerate_dist_files(root: Path) -> dict:
 
 _dist_files = _enumerate_dist_files(dist)
 _index_html = dist / "index.html"
+_index_text = _index_html.read_text(encoding="utf-8") if _index_html.is_file() else ""
+
+# A deploy prefix is a path of plain "/segment" parts. X-Forwarded-Prefix is
+# set by the nginx subpath ingress, but it is also forwarded from the client by
+# the Cloudflare tunnel — i.e. attacker-reachable — and it gets reflected into
+# the page, so anything that doesn't match collapses to root (no XSS surface).
+_PREFIX_RE = re.compile(r"^(?:/[A-Za-z0-9_-]+)+$")
+_NO_STORE = {"Cache-Control": "no-cache, no-store, must-revalidate"}
+
+
+def _resolve_base(request: Request) -> str:
+    """Public base path for this request, with trailing slash. "/" at a domain
+    root (tunnel, no prefix header); "/ultimate-web-stack-dev/" behind the
+    nginx subpath ingress."""
+    raw = request.headers.get("x-forwarded-prefix", "").rstrip("/")
+    return raw + "/" if raw and _PREFIX_RE.match(raw) else "/"
+
+
+def _render_index(base: str) -> HTMLResponse:
+    """index.html with an absolute <base href> + window.__APP_BASE__ injected as
+    the first thing in <head>, so the relative ./asset URLs (Vite base="./")
+    and the SPA's router/API base all resolve against the actual mount point."""
+    inject = (
+        f'<base href="{base}">'
+        f'<script>window.__APP_BASE__={json.dumps(base)};</script>'
+    )
+    html = _index_text.replace("<head>", "<head>\n    " + inject, 1)
+    return HTMLResponse(html, headers=_NO_STORE)
 
 
 @frontend_router.get("/{path:path}")
-async def frontend_handler(path: str):
+async def frontend_handler(path: str, request: Request):
     if path.startswith("api/") or path.startswith("future-gadget-lab/"):
-        from fastapi import HTTPException
         raise HTTPException(status_code=404, detail="API path not found")
 
     # Whitelist lookup: user input is only used as a dict key. The served path
     # is taken from the dict value, which was constructed at startup from
     # trusted filesystem enumeration — not from user input.
-    fp = _dist_files.get(path, _index_html)
+    fp = _dist_files.get(path)
+
+    # Unknown path = SPA fallback, and index.html itself, both get the runtime
+    # base injected and must not be cached (or browsers keep a stale bundle).
+    if fp is None or fp == _index_html:
+        return _render_index(_resolve_base(request))
 
     media_type = None
     if path.endswith(".js"):
@@ -119,13 +153,7 @@ async def frontend_handler(path: str):
     elif path.endswith(".json"):
         media_type = "application/json"
 
-    # index.html (also the SPA fallback) must not be cached, or browsers keep
-    # loading a stale bundle after a deploy. Hashed assets stay cacheable.
-    headers = {}
-    if fp == _index_html:
-        headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
-
-    return FileResponse(fp, media_type=media_type, headers=headers)
+    return FileResponse(fp, media_type=media_type)
 
 app.include_router(frontend_router, prefix="")
 

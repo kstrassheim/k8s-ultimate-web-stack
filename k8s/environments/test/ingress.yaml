@@ -6,6 +6,9 @@ metadata:
   annotations:
     cert-manager.io/cluster-issuer: mainpi-ca
     nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # Advertise the public sub-path so the backend injects the matching
+    # <base href>; the Cloudflare tunnel sends no such header (root mount).
+    nginx.ingress.kubernetes.io/x-forwarded-prefix: "/ultimate-web-stack-test"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     nginx.ingress.kubernetes.io/use-regex: "true"

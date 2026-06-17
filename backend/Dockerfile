@@ -6,9 +6,10 @@
 
 # ---- Stage 1: build the SPA ----
 FROM node:22-alpine AS frontend
-# Deploy sub-path the app is served under (e.g. /ultimate-web-stack-dev/).
-# Sets Vite base so assets/router/API resolve under the ingress path.
-ARG BASE_PATH=/
+# Relative Vite base so one build serves every mount point; the actual base
+# path is injected at runtime by the backend (X-Forwarded-Prefix -> <base href>,
+# see main.py). Overridable, but "./" is the only value the deploys use.
+ARG BASE_PATH=./
 WORKDIR /fe
 COPY frontend/package.json frontend/package-lock.json* /fe/
 RUN npm ci --legacy-peer-deps
