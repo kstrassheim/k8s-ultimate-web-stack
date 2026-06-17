@@ -583,7 +583,19 @@ const WorldlineMonitor = () => {
                                 point.current_worldline - worldlineHistory[index - 1].current_worldline
                               )}
                             </td>
-                            <td>{formatWorldLineChange(point.total_divergence)}</td>
+                            {/*
+                              The backend's /worldline-history payload does not
+                              include a cumulative `total_divergence` field —
+                              the formatter would render "N/A" for every row.
+                              Mirror the arithmetic the Current Worldline Status
+                              card uses (`current_worldline - 1.0`, the same
+                              expression the backend applies in
+                              `calculate_worldline_status` with
+                              base_worldline = 1.0) so each row's Total
+                              Divergence tracks the running divergence from
+                              the baseline. See issue #83.
+                            */}
+                            <td>{formatWorldLineChange(point.current_worldline - 1.0)}</td>
                           </tr>
                         ))}
                       </tbody>
