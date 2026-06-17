@@ -1,10 +1,13 @@
 export const env = import.meta.env.MODE;
 export const isDev = env === 'development';
 export const isProd = env === 'production';
-// Deploy sub-path (Vite base), e.g. "/ultimate-web-stack-dev/"; "/" locally.
-// import.meta is only referenced here (config is the single holder); other
-// modules import basePath so they stay transformable by the test runner.
-export const basePath = import.meta.env.BASE_URL || '/';
+// Deploy sub-path, e.g. "/ultimate-web-stack-dev/" behind the nginx subpath
+// ingress, or "/" at a dedicated subdomain root via the Cloudflare tunnel.
+// Resolved at RUNTIME from window.__APP_BASE__, which backend/main.py injects
+// into index.html from the X-Forwarded-Prefix header — so one build serves
+// both mounts. Defaults to "/" (local dev, SSR, tests; no injection).
+export const basePath =
+  (typeof window !== 'undefined' && window.__APP_BASE__) || '/';
 export const productionUrl = __PROD_URI__; //'; // generated during build to distinct whether local or in app service
 export const productionSocketUrl = __PROD_SOCKET_URI__;
 export const developmentUrl = 'http://localhost:5173';

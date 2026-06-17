@@ -152,7 +152,11 @@ export default defineConfig({
       requireEnv: true,
     })
   ],
-  base: "/",
+  // Relative asset URLs so a single build works at any mount point: the
+  // backend injects an absolute <base href> at serve time (root via the
+  // Cloudflare tunnel, /ultimate-web-stack-*/ via the nginx subpath ingress)
+  // and every ./asset resolves against it. See backend/main.py.
+  base: "./",
   resolve: {
     alias: getAliases()
   },
