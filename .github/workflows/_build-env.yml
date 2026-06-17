@@ -1,0 +1,97 @@
+name: _build-env
+
+# Reusable per-environment pipeline: Terraform apply (App Reg) on a GitHub-hosted
+# runner, then build+push the web image on the in-cluster runner. Called once per
+# environment by build-images.yml. Binding a GitHub Environment lets a required
+# reviewer on `prod` gate that environment's whole pipeline with one approval.
+
+on:
+  workflow_call:
+    inputs:
+      tf_env:
+        description: Terraform / app-reg environment (dev|test|prod)
+        type: string
+        required: true
+      gh_environment:
+        description: GitHub Environment to bind (federated AZURE_CLIENT_ID + approval gate)
+        type: string
+        required: true
+      image_tags:
+        description: Space-separated full image refs to build and push
+        type: string
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  terraform-config:
+    name: Terraform apply + config
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.gh_environment }}
+    env:
+      TF_ENV: ${{ inputs.tf_env }}
+      ARM_USE_OIDC: "true"
+      ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    concurrency:
+      group: terraform-app-reg-${{ inputs.tf_env }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.9.0
+
+      - name: Terraform apply + export config
+        working-directory: terraform
+        run: |
+          set -euo pipefail
+          terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
+          terraform apply -auto-approve -no-color -var="env=${TF_ENV}"
+          terraform output -json > terraform.config.json
+
+      - name: Upload config artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-terraform-config-${{ inputs.tf_env }}
+          path: terraform/terraform.config.json
+          retention-days: 1
+
+  build-push:
+    name: Build & push web image
+    needs: terraform-config
+    runs-on: arc-runner-scale-k8s-ultimate-web-stack
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch terraform config
+        uses: actions/download-artifact@v4
+        with:
+          name: web-terraform-config-${{ inputs.tf_env }}
+          path: _tfconfig
+
+      - name: Place config for build (frontend build + backend runtime)
+        run: |
+          set -euo pipefail
+          cp _tfconfig/terraform.config.json frontend/terraform.config.json
+          cp _tfconfig/terraform.config.json backend/terraform.config.json
+
+      - name: Log in to registry
+        run: |
+          echo "$REGISTRY_PASSWORD" | docker login mainpi.local:5000 \
+            --username "$REGISTRY_USERNAME" --password-stdin
+
+      - name: Build & push image
+        run: |
+          set -euo pipefail
+          tag_args=""
+          for t in ${{ inputs.image_tags }}; do tag_args="${tag_args} -t ${t}"; done
+          docker build ${tag_args} -f backend/Dockerfile .
+          for t in ${{ inputs.image_tags }}; do docker push "${t}"; done

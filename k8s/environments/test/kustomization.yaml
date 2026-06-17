@@ -1,5 +1,7 @@
 # ==============================
-# TEST environment  (namespace: ultimate-web-stack-test, deploys from prod branch)
+# TEST environment  (namespace: ultimate-web-stack-test, deploys from tags)
+# scripts/release.sh rewrites the image newTag below to <tag>-test (immutable)
+# in the tagged commit, so ArgoCD rolls the new build automatically.
 # ==============================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

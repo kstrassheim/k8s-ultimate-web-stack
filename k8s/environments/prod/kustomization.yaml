@@ -1,5 +1,7 @@
 # ==============================
 # PROD environment  (namespace: ultimate-web-stack, deploys from tags)
+# scripts/release.sh rewrites the image newTag below to <tag>-prod (immutable)
+# in the tagged commit; ArgoCD rolls it once the gated prod image is published.
 # ==============================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

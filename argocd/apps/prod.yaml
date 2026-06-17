@@ -1,8 +1,11 @@
 # ==============================
 # PROD — syncs from the latest semver git tag into ultimate-web-stack
 #
-# targetRevision is a semver constraint ('*' = highest tag), so ArgoCD
-# resolves it to the newest vX.Y.Z tag. Pushing a new tag rolls out prod.
+# targetRevision is a semver constraint ('*' = highest tag), so ArgoCD resolves
+# it to the newest vX.Y.Z tag — the same tag test tracks. The approval gate is
+# in CI: the prod image (web:<tag>-prod) is only built after the GitHub `prod`
+# environment is approved, so this app stays on the old image (rolling update
+# keeps the running pods) until the approved build publishes the new one.
 # ==============================
 apiVersion: argoproj.io/v1alpha1
 kind: Application
