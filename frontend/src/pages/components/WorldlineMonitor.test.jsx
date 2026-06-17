@@ -225,6 +225,57 @@ describe('WorldlineMonitor', () => {
     });
   });
 
+  // Regression test for issue #83: the Worldline History table's
+  // "Total Divergence" column must never render the literal "N/A".
+  // The backend's /worldline-history payload does not include a
+  // `total_divergence` field, so the component must compute the
+  // cumulative divergence from `current_worldline - 1.0` (the same
+  // arithmetic the Current Worldline Status card uses) rather than
+  // reading a non-existent payload field.
+  test('Worldline History table Total Divergence column renders cumulative divergence, not N/A', async () => {
+    // Mirror the production backend: no `total_divergence` on history rows.
+    const historyWithoutTotalDivergence = mockWorldlineHistory.map((row) => {
+      // Strip the optimistic `total_divergence` so the test exercises the
+      // real-backend shape, not the test-mock shape.
+      const { total_divergence, ...rest } = row;
+      return rest;
+    });
+    getWorldlineHistory.mockResolvedValueOnce(historyWithoutTotalDivergence);
+
+    render(<WorldlineMonitor />);
+
+    const historyCard = await waitFor(() => screen.getByTestId('worldline-history-card'));
+    const historyTable = within(historyCard).getByRole('table');
+
+    // The header must still name the column we are validating.
+    expect(within(historyTable).getByText('Total Divergence')).toBeInTheDocument();
+
+    // No row's Total Divergence cell may collapse to the literal "N/A".
+    const totalDivergenceCells = within(historyTable).getAllByRole('cell').filter(
+      (cell) => cell.previousElementSibling && cell.previousElementSibling.textContent.startsWith('+')
+    );
+    expect(totalDivergenceCells.length).toBeGreaterThan(0);
+    totalDivergenceCells.forEach((cell) => {
+      expect(cell.textContent).not.toMatch(/^N\/A$/);
+    });
+
+    // Spot-check the Base row: worldline 1.0 -> +0.000000.
+    const baseRow = within(historyTable).getByText('Base').closest('tr');
+    const baseCells = within(baseRow).getAllByRole('cell');
+    // Cells are: Step, Worldline, Change, Total Divergence
+    expect(baseCells[3]).toHaveTextContent('+0.000000');
+
+    // Spot-check Exp 1: worldline 1.337192 -> +0.337192.
+    const exp1Row = within(historyTable).getByText('Exp 1').closest('tr');
+    const exp1Cells = within(exp1Row).getAllByRole('cell');
+    expect(exp1Cells[3]).toHaveTextContent('+0.337192');
+
+    // Spot-check Exp 2: worldline 1.698596 -> +0.698596.
+    const exp2Row = within(historyTable).getByText('Exp 2').closest('tr');
+    const exp2Cells = within(exp2Row).getAllByRole('cell');
+    expect(exp2Cells[3]).toHaveTextContent('+0.698596');
+  });
+
   // Regression test for issue #84: the "Last updated" footer must not render
   // the literal string "Invalid Date" even when the timestamp is missing or
   // unparseable. The footer should instead render a stable fallback.
