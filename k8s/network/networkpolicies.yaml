@@ -107,3 +107,33 @@ spec:
       ports:
         - port: 8000
           protocol: TCP
+---
+# metrics scraper -> web on 8000. Narrows what the implicit `10.42.0.0/16`
+# allow above grants in spirit (the scraper is the only reason this rule
+# exists), without removing that broader rule (other in-cluster clients still
+# rely on it). Defaults target kube-prometheus-stack v50+:
+#   - scraper namespace: `monitoring`
+#   - scraper pod label: `app.kubernetes.io/name: prometheus`
+# If the scraper is hand-rolled or on a different chart, adjust the namespace
+# and pod selector here — no other rule depends on these.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-prometheus-scraper-ingress
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 8000
+          protocol: TCP
