@@ -1,0 +1,14 @@
+# ==============================
+# TEST MongoDB-backup env patch
+# ==============================
+- op: replace
+  path: /spec/jobTemplate/spec/template/spec/containers/0/env
+  value:
+    - name: MONGO_URI
+      value: mongodb://mongodb:27017
+    - name: MONGO_DB
+      value: future_gadget_lab_test
+    - name: DEST_DIR
+      value: /backup
+    - name: RETENTION_DAYS
+      value: "7"

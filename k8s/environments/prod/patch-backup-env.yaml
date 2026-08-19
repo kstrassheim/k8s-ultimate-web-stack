@@ -1,0 +1,18 @@
+# ==============================
+# PROD MongoDB-backup env patch
+#
+# prod uses the un-suffixed `future_gadget_lab` database (same as the web
+# Deployment patch). Kept here so adding a new env is a copy of one of these
+# three files plus one line in the overlay's kustomization.yaml.
+# ==============================
+- op: replace
+  path: /spec/jobTemplate/spec/template/spec/containers/0/env
+  value:
+    - name: MONGO_URI
+      value: mongodb://mongodb:27017
+    - name: MONGO_DB
+      value: future_gadget_lab
+    - name: DEST_DIR
+      value: /backup
+    - name: RETENTION_DAYS
+      value: "7"

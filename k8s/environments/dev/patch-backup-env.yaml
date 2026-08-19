@@ -1,0 +1,18 @@
+# ==============================
+# DEV MongoDB-backup env patch
+#
+# The base CronJob targets MONGO_DB=future_gadget_lab (the prod DB). In dev
+# the database is `future_gadget_lab_dev`, so we replace the env block.
+# Matches the per-env patch the web Deployment uses (patch-web-env.yaml).
+# ==============================
+- op: replace
+  path: /spec/jobTemplate/spec/template/spec/containers/0/env
+  value:
+    - name: MONGO_URI
+      value: mongodb://mongodb:27017
+    - name: MONGO_DB
+      value: future_gadget_lab_dev
+    - name: DEST_DIR
+      value: /backup
+    - name: RETENTION_DAYS
+      value: "7"
