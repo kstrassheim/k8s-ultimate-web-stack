@@ -103,6 +103,53 @@ jobs:
           path: frontend/coverage/lcov-report
           if-no-files-found: ignore
 
+  bash-backup-tests:
+    # Smoke tests + drift guard for scripts/mongo-backup.sh.
+    #
+    # Closes the loop on issue #90's acceptance criteria by exercising every
+    # error path the script claims to handle (volume full, mongodump fail,
+    # empty dump, tar ENOSPC, read-only destination, EROFS on /tmp) AND by
+    # failing the build if the inline ConfigMap body in the CronJob manifest
+    # drifts from the canonical scripts/mongo-backup.sh. This is the CI guard
+    # for review finding #3 (wiring smoke tests in) and finding #4 (preventing
+    # silent drift between the two copies of the script) on PR #99.
+    name: Bash Backup Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check on the script
+        # `bash -n` parses without executing — catches unbalanced quotes /
+        # heredocs before any test scenario runs.
+        run: bash -n scripts/mongo-backup.sh
+
+      - name: Run backup script smoke tests
+        run: bash scripts/mongo-backup_test.sh
+
+      - name: Verify inline ConfigMap body matches scripts/mongo-backup.sh
+        # Extract the indented block under `data.mongo-backup.sh: |` from
+        # the CronJob manifest, strip comments + blank lines, and diff
+        # against the same view of scripts/mongo-backup.sh. Exits 0 on
+        # match, 1 on any divergence (which fails the CI run).
+        run: |
+          set -euo pipefail
+          awk '
+            /^  mongo-backup.sh: \|/ { in_data = 1; next }
+            in_data && /^[^ ]/      { in_data = 0 }
+            in_data                  { sub(/^    /, ""); print }
+          ' k8s/mongodb/backup-cronjob.yaml \
+            | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' \
+            > /tmp/inline_exec.sh
+          grep -v '^[[:space:]]*#' scripts/mongo-backup.sh \
+            | grep -v '^[[:space:]]*$' \
+            > /tmp/file_exec.sh
+          if ! diff -u /tmp/file_exec.sh /tmp/inline_exec.sh; then
+            echo "::error::The inline ConfigMap body in k8s/mongodb/backup-cronjob.yaml has drifted from scripts/mongo-backup.sh. Update the inline copy (or vice-versa) and re-run CI." >&2
+            exit 1
+          fi
+          echo "OK: inline ConfigMap body matches scripts/mongo-backup.sh"
+
   terraform-validate:
     name: Terraform Validate
     runs-on: ubuntu-latest

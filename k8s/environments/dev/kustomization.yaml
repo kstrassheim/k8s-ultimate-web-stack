@@ -24,3 +24,7 @@ patches:
     target:
       kind: Deployment
       name: web
+  - path: patch-backup-env.yaml
+    target:
+      kind: CronJob
+      name: mongo-backup

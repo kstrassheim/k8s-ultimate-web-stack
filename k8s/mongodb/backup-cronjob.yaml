@@ -1,0 +1,251 @@
+# ==============================
+# MongoDB backup CronJob.
+#
+# Closes issue #90: the previous (uncommitted) script reported success when
+# the destination volume was full. This one runs scripts/mongo-backup.sh,
+# which is designed to exit non-zero on any write failure and to name the
+# destination + reason in its error log.
+#
+# Schedule: nightly at 03:00 UTC (configurable per-env via kustomize).
+# Destination: a dedicated 10Gi PVC mounted at /backup (also configurable
+# per-env via patch). The same script is reused across dev / test / prod;
+# the per-env kustomize overlay sets the namespace and any per-env patches.
+#
+# The script's canonical source is scripts/mongo-backup.sh; the body is
+# mirrored below in the ConfigMap so the CronJob carries its own working
+# copy without requiring a git-mount or image rebuild. The CI guard in
+# .github/workflows/ci.yml::bash-backup-tests compares the two copies on
+# every PR and fails the build if they diverge, so there is one source of
+# truth (the file under scripts/, exercised by the smoke tests) and zero
+# risk of the inline copy silently drifting.
+# ==============================
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mongo-backup-script
+  labels:
+    app: mongo-backup
+    app.kubernetes.io/managed-by: argocd
+data:
+  mongo-backup.sh: |
+    #!/usr/bin/env bash
+    # Inline copy of scripts/mongo-backup.sh — keep these two in sync.
+    # The bash-backup-tests CI job diffs the executable lines of this block
+    # against scripts/mongo-backup.sh and fails the build on any divergence,
+    # so the file in scripts/ remains the only source of truth to edit.
+    set -euo pipefail
+
+    MONGO_URI="${MONGO_URI:-mongodb://mongodb:27017}"
+    MONGO_DB="${MONGO_DB:-future_gadget_lab}"
+    DEST_DIR="${DEST_DIR:-/backup}"
+    RETENTION_DAYS="${RETENTION_DAYS:-7}"
+    REQUIRED_FREE_KB="${REQUIRED_FREE_KB:-102400}"
+
+    log()  { printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
+    fail() {
+      log "BACKUP FAILED destination=${DEST_DIR} reason=${1}"
+      exit 1
+    }
+
+    log "BACKUP STARTING source=${MONGO_URI} db=${MONGO_DB} destination=${DEST_DIR}"
+
+    if [ ! -d "${DEST_DIR}" ]; then
+      if mkdir -p "${DEST_DIR}" 2>/dev/null; then
+        log "created missing destination directory ${DEST_DIR}"
+      else
+        fail "destination directory does not exist and cannot be created"
+      fi
+    fi
+    if [ ! -w "${DEST_DIR}" ]; then
+      fail "destination directory is not writable"
+    fi
+
+    available_kb="$(df -Pk "${DEST_DIR}" | awk 'NR==2 {print $4}')"
+    if [ "${available_kb}" -lt "${REQUIRED_FREE_KB}" ]; then
+      fail "destination volume full (available=${available_kb}KiB required=${REQUIRED_FREE_KB}KiB)"
+    fi
+
+    # ERR/INT/TERM trap registered BEFORE the first potentially-failing call
+    # (mktemp) so every error path — including a /tmp EROFS, a pre-flight
+    # `find` failure, or anything between `set -e` and the dump — funnels
+    # through fail() and emits the destination-named error line required by
+    # issue #90's acceptance criterion #2.
+    tmp_dir=""
+    on_error() {
+      if [ -n "${tmp_dir}" ] && [ -d "${tmp_dir}" ]; then
+        rm -rf "${tmp_dir}"
+      fi
+      fail "aborted by signal or error"
+    }
+    trap on_error ERR INT TERM
+
+    timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
+    tmp_dir="$(mktemp -d -t mongo-backup.XXXXXX)"
+    trap on_error ERR INT TERM
+
+    log "running mongodump"
+    if ! mongodump --uri="${MONGO_URI}" --db="${MONGO_DB}" --out="${tmp_dir}"; then
+      fail "mongodump returned non-zero exit code"
+    fi
+
+    dump_bytes="$(find "${tmp_dir}" -type f -printf '%s\n' 2>/dev/null | awk 'BEGIN{s=0} {s+=$1} END{print s+0}')"
+    if [ "${dump_bytes}" -le 0 ]; then
+      fail "mongodump produced no files (dump_bytes=0)"
+    fi
+
+    archive="${DEST_DIR}/${MONGO_DB}-${timestamp}.tar.gz"
+    log "compressing backup to ${archive}"
+    if ! tar -C "${tmp_dir}" -czf "${archive}" .; then
+      fail "tar compression failed (likely destination volume full mid-write)"
+    fi
+
+    if [ ! -s "${archive}" ]; then
+      fail "archive is empty after write"
+    fi
+    if ! tar -tzf "${archive}" >/dev/null 2>&1; then
+      fail "archive is corrupt or unreadable"
+    fi
+
+    if [ "${RETENTION_DAYS}" -gt 0 ]; then
+      log "pruning backups older than ${RETENTION_DAYS} days from ${DEST_DIR}"
+      if ! find "${DEST_DIR}" -maxdepth 1 -name "${MONGO_DB}-*.tar.gz" -mtime "+${RETENTION_DAYS}" -delete; then
+        log "WARN retention prune failed (non-fatal; backup still succeeded)"
+      fi
+    fi
+
+    archive_bytes="$(stat -c%s "${archive}")"
+    rm -rf "${tmp_dir}"
+    trap - ERR INT TERM
+    log "BACKUP SUCCEEDED archive=${archive} size=${archive_bytes} bytes"
+    exit 0
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mongo-backup-data
+  labels:
+    app: mongo-backup
+    app.kubernetes.io/managed-by: argocd
+spec:
+  # ReadWriteOnce: a single backup pod at a time. Concurrency is already
+  # forbidden on the CronJob itself (concurrencyPolicy: Forbid), but the
+  # RWO volume is the belt-and-braces guard against a manual `kubectl create
+  # job` running two dumps into the same destination.
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      # 10Gi holds ~7 nightly mongodumps of a small lab DB plus a comfortable
+      # safety margin; the script's REQUIRED_FREE_KB pre-check is the real
+      # safety net against the volume filling up silently.
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: mongo-backup
+  labels:
+    app: mongo-backup
+    app.kubernetes.io/managed-by: argocd
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: mongo-backup
+  labels:
+    app: mongo-backup
+    app.kubernetes.io/managed-by: argocd
+spec:
+  # Nightly at 03:00 UTC. Override per-env via kustomize if prod needs a
+  # different cadence (e.g. every 6h). Cron expression is in UTC; K8s
+  # CronJobs don't honour namespace-local timezones.
+  schedule: "0 3 * * *"
+  # Never start a second backup while one is still running — the destination
+  # is a single PVC and mongodump against the same DB is not safe to
+  # overlap.
+  concurrencyPolicy: Forbid
+  # Cap how late a missed run can be picked up. If the cluster is down at
+  # 03:00, retry within the next minute, otherwise skip and wait for the
+  # next scheduled run.
+  startingDeadlineSeconds: 60
+  # Keep a short history so `kubectl get jobs -l app=mongo-backup` shows
+  # recent success/failure context. The script's own logs are the source of
+  # truth; these are just for at-a-glance status.
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  # Suspend defaults to false. Set true per-env via kustomize if you want
+  # to disable backups in, say, dev while keeping them in prod.
+  suspend: false
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            app: mongo-backup
+        spec:
+          serviceAccountName: mongo-backup
+          restartPolicy: Never
+          # No activeDeadlineSeconds — a stuck mongodump should be visible
+          # in logs, not silently killed mid-write.
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 10001
+            runAsGroup: 10001
+            fsGroup: 10001
+          containers:
+            - name: backup
+              # mongo:8.0 matches the StatefulSet's image and bundles both
+              # mongodump and the GNU tar we need for compression.
+              image: mongo:8.0
+              imagePullPolicy: IfNotPresent
+              command: ["/bin/bash", "/scripts/mongo-backup.sh"]
+              env:
+                - name: MONGO_URI
+                  value: mongodb://mongodb:27017
+                - name: MONGO_DB
+                  # Set per-env via patch — the dev / test overlays should
+                  # override to point at the right database (see env patches
+                  # for the web Deployment). The base default keeps things
+                  # working in any single-env deployment.
+                  value: future_gadget_lab
+                - name: DEST_DIR
+                  value: /backup
+                - name: RETENTION_DAYS
+                  value: "7"
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 1Gi
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: backup-destination
+                  mountPath: /backup
+                - name: backup-script
+                  mountPath: /scripts
+                  readOnly: true
+                # Writable in-memory /tmp — required because the script uses
+                # `mktemp -d -t mongo-backup.XXXXXX` (which defaults to /tmp)
+                # for the staged dump. Without this, the very first run on a
+                # pod with readOnlyRootFilesystem=true fails with EROFS before
+                # any of the backup logic runs — see PR #99 review finding #1.
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: backup-destination
+              persistentVolumeClaim:
+                claimName: mongo-backup-data
+            - name: backup-script
+              configMap:
+                name: mongo-backup-script
+                defaultMode: 0o555
+            - name: tmp
+              emptyDir:
+                medium: Memory

@@ -66,6 +66,31 @@ spec:
         - ipBlock:
             cidr: 10.43.0.0/16
 ---
+# mongo-backup -> mongodb (egress from the backup CronJob pods to the DB port).
+# Separate from `egress-mongodb` because that one is keyed to `app: web`.
+# Without this, the cluster's default-deny NetworkPolicy blocks the backup
+# pod's mongodump call to `mongodb:27017` and the CronJob will surface a
+# cryptic connection-refused instead of a real mongodump error.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: egress-mongodb-backup
+spec:
+  podSelector:
+    matchLabels:
+      app: mongo-backup
+  policyTypes:
+    - Egress
+  egress:
+    - ports:
+        - port: 27017
+          protocol: TCP
+      to:
+        - ipBlock:
+            cidr: 10.42.0.0/16
+        - ipBlock:
+            cidr: 10.43.0.0/16
+---
 # mongodb ingress on 27017 from in-cluster pods.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
