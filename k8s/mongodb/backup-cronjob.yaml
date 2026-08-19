@@ -10,6 +10,14 @@
 # Destination: a dedicated 10Gi PVC mounted at /backup (also configurable
 # per-env via patch). The same script is reused across dev / test / prod;
 # the per-env kustomize overlay sets the namespace and any per-env patches.
+#
+# The script's canonical source is scripts/mongo-backup.sh; the body is
+# mirrored below in the ConfigMap so the CronJob carries its own working
+# copy without requiring a git-mount or image rebuild. The CI guard in
+# .github/workflows/ci.yml::bash-backup-tests compares the two copies on
+# every PR and fails the build if they diverge, so there is one source of
+# truth (the file under scripts/, exercised by the smoke tests) and zero
+# risk of the inline copy silently drifting.
 # ==============================
 ---
 apiVersion: v1
@@ -22,12 +30,10 @@ metadata:
 data:
   mongo-backup.sh: |
     #!/usr/bin/env bash
-    # Inline copy of scripts/mongo-backup.sh. Kept here so the CronJob
-    # carries its own working copy — no git-mount required — and so a
-    # `kubectl rollout restart cronjob/mongo-backup` picks up script edits
-    # without rebuilding any image. Update both files when changing the
-    # backup logic; the test suite (scripts/mongo-backup_test.sh) only sees
-    # the scripts/ copy, so run it before committing.
+    # Inline copy of scripts/mongo-backup.sh — keep these two in sync.
+    # The bash-backup-tests CI job diffs the executable lines of this block
+    # against scripts/mongo-backup.sh and fails the build on any divergence,
+    # so the file in scripts/ remains the only source of truth to edit.
     set -euo pipefail
 
     MONGO_URI="${MONGO_URI:-mongodb://mongodb:27017}"
@@ -60,9 +66,23 @@ data:
       fail "destination volume full (available=${available_kb}KiB required=${REQUIRED_FREE_KB}KiB)"
     fi
 
+    # ERR/INT/TERM trap registered BEFORE the first potentially-failing call
+    # (mktemp) so every error path — including a /tmp EROFS, a pre-flight
+    # `find` failure, or anything between `set -e` and the dump — funnels
+    # through fail() and emits the destination-named error line required by
+    # issue #90's acceptance criterion #2.
+    tmp_dir=""
+    on_error() {
+      if [ -n "${tmp_dir}" ] && [ -d "${tmp_dir}" ]; then
+        rm -rf "${tmp_dir}"
+      fi
+      fail "aborted by signal or error"
+    }
+    trap on_error ERR INT TERM
+
     timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
     tmp_dir="$(mktemp -d -t mongo-backup.XXXXXX)"
-    trap 'rm -rf "${tmp_dir}"; fail "aborted by signal or error"' ERR INT TERM
+    trap on_error ERR INT TERM
 
     log "running mongodump"
     if ! mongodump --uri="${MONGO_URI}" --db="${MONGO_DB}" --out="${tmp_dir}"; then
@@ -211,6 +231,13 @@ spec:
                 - name: backup-script
                   mountPath: /scripts
                   readOnly: true
+                # Writable in-memory /tmp — required because the script uses
+                # `mktemp -d -t mongo-backup.XXXXXX` (which defaults to /tmp)
+                # for the staged dump. Without this, the very first run on a
+                # pod with readOnlyRootFilesystem=true fails with EROFS before
+                # any of the backup logic runs — see PR #99 review finding #1.
+                - name: tmp
+                  mountPath: /tmp
           volumes:
             - name: backup-destination
               persistentVolumeClaim:
@@ -219,3 +246,6 @@ spec:
               configMap:
                 name: mongo-backup-script
                 defaultMode: 0o555
+            - name: tmp
+              emptyDir:
+                medium: Memory

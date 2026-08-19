@@ -53,13 +53,29 @@ if [ "${available_kb}" -lt "${REQUIRED_FREE_KB}" ]; then
   fail "destination volume full (available=${available_kb}KiB required=${REQUIRED_FREE_KB}KiB)"
 fi
 
+# ---- Register the ERR/INT/TERM trap BEFORE the first potentially-failing call
+# (mktemp) so every error path — including a /tmp EROFS, a pre-flight
+# `find` failure, or anything between `set -e` and the dump — funnels through
+# fail() and emits the destination-named error line required by issue #90's
+# acceptance criterion #2. ----
+# tmp_dir is set later; the trap uses ${tmp_dir:-} so it still works when it
+# fires before mktemp completes (rm -rf on an empty/empty-ish string is a
+# safe no-op).
+tmp_dir=""
+on_error() {
+  if [ -n "${tmp_dir}" ] && [ -d "${tmp_dir}" ]; then
+    rm -rf "${tmp_dir}"
+  fi
+  fail "aborted by signal or error"
+}
+trap on_error ERR INT TERM
+
 # ---- Backup: dump to a temp dir, then compress + move atomically so a
 # mid-write failure cannot leave a partial archive at the destination ----
 timestamp="$(date -u +'%Y%m%dT%H%M%SZ')"
 tmp_dir="$(mktemp -d -t mongo-backup.XXXXXX)"
-# Re-arm the trap so an error during dump/tar still removes the temp dir AND
-# emits the same destination-named failure line.
-trap 'rm -rf "${tmp_dir}"; fail "aborted by signal or error"' ERR INT TERM
+# Re-arm the trap so it carries the actual tmp_dir path now that we know it.
+trap on_error ERR INT TERM
 
 log "running mongodump"
 if ! mongodump --uri="${MONGO_URI}" --db="${MONGO_DB}" --out="${tmp_dir}"; then

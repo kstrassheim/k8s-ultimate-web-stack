@@ -171,5 +171,45 @@ chmod 555 "${sb}/ro" 2>/dev/null || true
 run_scenario "dest read-only" "${sb}" 1 "${sb}/ro"
 rm -rf "${sb}"
 
+# ---- Regression coverage for the reviewer's findings on PR #99:
+#   * Finding #1 — readOnlyRootFilesystem: true without a /tmp mount makes
+#     mktemp fail with EROFS on the very first run. With the trap
+#     registered AFTER mktemp (the old code), the raw mktemp error was
+#     emitted but no "BACKUP FAILED destination=… reason=…" line.
+#   * Finding #2 — the trap is now registered BEFORE mktemp so every
+#     error path between `set -e` and the dump still funnels through
+#     fail() and emits the named-destination line required by issue #90.
+# We simulate the EROFS by pointing TMPDIR at a path that mktemp cannot
+# create under (a non-directory path); with set -e + the new early trap,
+# the script must still emit "BACKUP FAILED destination=… reason=…".
+echo "==> scenario: TMPDIR unwritable (readOnlyRootFilesystem: true, no /tmp mount)"
+sb="$(make_sandbox)"
+out_file="$(mktemp)"
+err_file="$(mktemp)"
+# Use a path that exists but is not a directory (regular file). mktemp -d
+# refuses to create inside a non-directory and exits non-zero, which is
+# what `mktemp: failed to create directory … : Not a directory` looks like
+# in production under readOnlyRootFilesystem=true without an emptyDir mount.
+echo not-a-directory >"${sb}/notdir"
+env -i \
+  HOME="${HOME}" \
+  PATH="${sb}/bin:/usr/bin:/bin" \
+  TMPDIR="${sb}/notdir" \
+  MONGO_URI="mongodb://mongodb:27017" \
+  MONGO_DB="future_gadget_lab" \
+  DEST_DIR="${sb}/dest" \
+  bash "${SCRIPT_UNDER_TEST}" >"${out_file}" 2>"${err_file}"
+actual_exit=$?
+if [ "${actual_exit}" -ne 0 ] \
+   && grep -q "destination=${sb}/dest" "${err_file}" \
+   && grep -q "reason=" "${err_file}" \
+   && grep -q "BACKUP FAILED" "${err_file}"; then
+  pass "[EROFS on /tmp] exited ${actual_exit} AND emitted BACKUP FAILED destination=… reason=…"
+else
+  fail "[EROFS on /tmp] expected non-zero exit + named-destination failure; got exit=${actual_exit}; stderr=$(tr '\n' ' ' < "${err_file}")"
+fi
+rm -f "${out_file}" "${err_file}"
+rm -rf "${sb}"
+
 echo "==> summary: ${PASS} passed, ${FAIL} failed"
 [ "${FAIL}" -eq 0 ]
