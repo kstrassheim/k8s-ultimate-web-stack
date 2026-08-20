@@ -232,8 +232,8 @@ argocd app get ultimate-web-stack
 argocd app get ultimate-web-stack-test
 argocd app get ultimate-web-stack-dev
 
-# From outside the cluster, hit the public URL (Cloudflare Access)
-# or the internal LAN URL (canonical for the tester):
+# From outside the cluster, hit the internal LAN URL (canonical for
+# the tester):
 curl -sf https://datapi.galaxus.box/ultimate-web-stack-dev/ready
 curl -sf https://datapi.galaxus.box/ultimate-web-stack-test/ready
 curl -sf https://datapi.galaxus.box/ultimate-web-stack/ready
