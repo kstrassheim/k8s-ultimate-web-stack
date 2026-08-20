@@ -67,6 +67,7 @@ spec:
               memory: 512Mi
           # /health calls psutil.cpu_percent(interval=1), which blocks ~1s, so
           # the probe timeout must exceed that (default timeoutSeconds=1 fails).
+          # Liveness = "is the process alive"; the pod restart path is here.
           livenessProbe:
             httpGet:
               path: /health
@@ -75,10 +76,16 @@ spec:
             periodSeconds: 15
             timeoutSeconds: 5
             failureThreshold: 3
+          # /ready hits MongoDB — the one external dependency the API
+          # needs to serve real traffic. While the new pod 503s on /ready,
+          # kube-proxy keeps it out of the Service endpoints, so a rolling
+          # update never sends a request to a pod that would 500. Failing
+          # this probe does NOT restart the pod (that's liveness's job).
           readinessProbe:
             httpGet:
-              path: /health
+              path: /ready
               port: 8000
             initialDelaySeconds: 5
             periodSeconds: 10
             timeoutSeconds: 5
+            failureThreshold: 3
