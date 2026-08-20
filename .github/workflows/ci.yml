@@ -266,11 +266,39 @@ jobs:
           done
           echo "FRONTEND_PID=$FRONTEND_PID" >> $GITHUB_ENV
 
+      - name: "Flake guard: run experiments.cy.js 20 times (issue #95)"
+        env:
+          npm_config_mock: 'true'
+        run: |
+          cd frontend
+          # Acceptance criterion #2 for issue #95: "The test passes twenty
+          # consecutive runs." Loop experiments.cy.js twenty times against
+          # the running mock backend + frontend; failure of any single run
+          # fails this job.
+          #
+          # This is NOT Cypress retries — cypress.config.js has no `retries`
+          # field, so each invocation is a fresh run, and no test is
+          # skipped or marked pending. It is a pure verification loop for
+          # the chained-assertion fix in PR #102.
+          for i in $(seq 1 20); do
+            echo "::group::experiments run $i/20"
+            if ! npx cypress run --browser chrome --spec cypress/e2e/experiments.cy.js; then
+              echo "::error::experiments.cy.js failed on run $i/20"
+              exit 1
+            fi
+            echo "::endgroup::"
+          done
+          echo "OK: all 20 runs of experiments.cy.js passed"
+
       - name: Run E2E Tests (Cypress directly, no server spawning)
         env:
           npm_config_mock: 'true'
         run: |
           cd frontend
+          # Clear any coverage data the flake-guard loop above may have
+          # left behind so the report below reflects only this single
+          # full-suite run.
+          rm -rf .nyc_output/*
           # Run Cypress directly - backend is already running in the background
           # Do NOT use test:e2e:coverage (it spawns its own backend causing EADDRINUSE)
           npx cypress run --browser chrome --env coverage=true

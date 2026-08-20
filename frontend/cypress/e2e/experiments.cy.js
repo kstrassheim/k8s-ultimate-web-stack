@@ -77,11 +77,18 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     
     // Submit the form
     cy.get('[data-testid="experiment-form-submit"]').click();
-    
-    // Verify success message
-    cy.get('.notyf__toast--success').should('be.visible');
-    cy.get('.notyf__toast--success').should('contain.text', 'Experiment created successfully');
-    
+
+    // Verify success message.
+    // The notyf toast auto-dismisses after 1s. The two assertions below are
+    // chained on a single `cy.get` so the gap between the visibility check
+    // and the text check cannot let the toast fall out of the DOM before the
+    // second assertion runs (which would happen with two separate `cy.get`
+    // chains if the JS event loop is blocked during the React re-render that
+    // follows the create POST — form close + fetchExperiments re-fetch).
+    cy.get('.notyf__toast--success', { timeout: 10000 })
+      .should('be.visible')
+      .and('contain.text', 'Experiment created successfully');
+
     // Verify the new experiment appears in the table
     cy.get('[data-testid="experiments-table"]').should('contain.text', experimentName);
     cy.get('[data-testid="experiments-table"]').should('contain.text', 'Cypress Tester');
@@ -193,11 +200,14 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     
     // Submit the form
     cy.get('[data-testid="experiment-form-submit"]').click();
-    
-    // Verify success message
-    cy.get('.notyf__toast--success').should('be.visible');
-    cy.get('.notyf__toast--success').should('contain.text', 'Experiment updated successfully');
-    
+
+    // Verify success message. Chained assertions on a single `cy.get` — see
+    // the create-new-experiment test above for the rationale (notyf
+    // auto-dismisses after 1s; two separate `cy.get` chains race the toast).
+    cy.get('.notyf__toast--success', { timeout: 10000 })
+      .should('be.visible')
+      .and('contain.text', 'Experiment updated successfully');
+
     // Verify the experiment was updated in the table
     cy.get('[data-testid="experiments-table"]').should('contain.text', updatedName);
     cy.contains('tr', updatedName).should('contain.text', 'completed');
@@ -232,11 +242,14 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     
     // Confirm deletion
     cy.get('[data-testid="confirm-delete-btn"]').click();
-    
-    // Verify success message
-    cy.get('.notyf__toast--success').should('be.visible');
-    cy.get('.notyf__toast--success').should('contain.text', 'Experiment deleted successfully');
-    
+
+    // Verify success message. Chained assertions on a single `cy.get` — see
+    // the create-new-experiment test above for the rationale (notyf
+    // auto-dismisses after 1s; two separate `cy.get` chains race the toast).
+    cy.get('.notyf__toast--success', { timeout: 10000 })
+      .should('be.visible')
+      .and('contain.text', 'Experiment deleted successfully');
+
     // Verify the experiment was removed from the table
     cy.get('[data-testid="experiments-table"]').should('not.contain.text', experimentName);
   });
@@ -317,11 +330,14 @@ describe('Future Gadget Lab - Experiments CRUD Operations', () => {
     
     // Submit the form
     cy.get('[data-testid="experiment-form-submit"]').click();
-    
-    // Verify success message
-    cy.get('.notyf__toast--success').should('be.visible');
-    cy.get('.notyf__toast--success').should('contain.text', 'Experiment created successfully');
-    
+
+    // Verify success message. Chained assertions on a single `cy.get` — see
+    // the create-new-experiment test above for the rationale (notyf
+    // auto-dismisses after 1s; two separate `cy.get` chains race the toast).
+    cy.get('.notyf__toast--success', { timeout: 10000 })
+      .should('be.visible')
+      .and('contain.text', 'Experiment created successfully');
+
     // Verify the new experiment appears in the table with the negative value
     cy.get('[data-testid="experiments-table"]').should('contain.text', experimentName);
     
