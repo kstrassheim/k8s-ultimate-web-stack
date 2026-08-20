@@ -1,5 +1,5 @@
 import psutil
-from fastapi import FastAPI, APIRouter, Request, HTTPException
+from fastapi import FastAPI, APIRouter, Request, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from pathlib import Path
@@ -75,6 +75,27 @@ async def health():
             "free": memory_info.free,
         },
     }
+
+
+@app.get("/ready")
+@app.head("/ready")
+async def ready():
+    """Readiness probe: 200 once the backend can actually serve traffic.
+
+    Distinct from /health (liveness) on purpose — liveness only proves the
+    Python process is alive; readiness must show that every dependency the
+    app needs to handle a request is reachable. With MongoDB down the API
+    is effectively broken, so we go 503 here and let k8s keep the pod out
+    of the Service endpoints until the DB is back. Unlike liveness, this
+    does NOT restart the pod.
+    """
+    if fgl_service.health_check():
+        return {"status": "ready"}
+    return Response(
+        status_code=503,
+        content='{"status":"not_ready","detail":"mongodb unreachable"}',
+        media_type="application/json",
+    )
 
 # Frontend Router
 dist = Path("./dist").resolve()

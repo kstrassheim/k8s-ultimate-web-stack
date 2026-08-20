@@ -511,3 +511,30 @@ def test_worldline_history_with_experiment_details():
                 assert result[2]["added_experiment"]["name"] == "Test Experiment 2"
                 assert result[2]["added_experiment"]["status"] == "in_progress"
                 assert result[2]["added_experiment"]["world_line_change"] == -0.048256
+
+def test_health_check_returns_true_when_mongo_ping_succeeds(db_service):
+    """A reachable backing store reports True (True is what the /ready
+    endpoint gates the Service-endpoint membership on)."""
+    with patch.object(db_service._mongo_client.admin, "command", return_value={"ok": 1.0}):
+        assert db_service.health_check() is True
+
+
+def test_health_check_returns_false_when_mongo_ping_raises(db_service):
+    """A broken connection (MongoDB down, network blip) reports False
+    rather than raising, so the readiness probe gets a clean 503 instead
+    of a 500 from an unhandled exception."""
+    from pymongo.errors import PyMongoError
+    with patch.object(
+        db_service._mongo_client.admin,
+        "command",
+        side_effect=PyMongoError("boom"),
+    ):
+        assert db_service.health_check() is False
+
+
+def test_health_check_returns_false_when_client_is_none():
+    """A service that was never initialised (no client at all) still has
+    a defined answer — False, not a crash."""
+    svc = FutureGadgetLabDataService.__new__(FutureGadgetLabDataService)
+    svc._mongo_client = None
+    assert svc.health_check() is False

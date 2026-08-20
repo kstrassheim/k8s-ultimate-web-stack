@@ -53,6 +53,23 @@ class FutureGadgetLabDataService:
         logger.info("Using MongoDB database %s", self.mongodb_db_name)
         self._seed_mongodb_if_empty()
 
+    def health_check(self) -> bool:
+        """Return True if the configured MongoDB is reachable, False otherwise.
+
+        Used by the k8s readiness probe — the pod only joins the Service
+        endpoints once this returns True. Reaches the live `admin` db, not
+        a user db, so the check stays valid even if the configured database
+        is dropped during an operational recovery.
+        """
+        if self._mongo_client is None:
+            return False
+        try:
+            self._mongo_client.admin.command("ping")
+            return True
+        except PyMongoError as exc:
+            logger.error("MongoDB health check failed: %s", exc)
+            return False
+
     def _seed_mongodb_if_empty(self) -> None:
         """Seed MongoDB with test data if empty."""
         if self._db is None:

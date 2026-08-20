@@ -90,7 +90,34 @@ class TestMainModule:
         assert response.status_code == 200
         # HEAD requests don't return a body
         assert response.content == b''
-    
+
+    def test_ready_endpoint_when_dependencies_are_reachable(self):
+        """Readiness probe returns 200 with status=ready when the data
+        service reports its backing store is reachable."""
+        with patch.object(main.fgl_service, "health_check", return_value=True):
+            response = client.get("/ready")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ready"}
+
+    def test_ready_endpoint_head_when_dependencies_are_reachable(self):
+        """HEAD /ready is also part of the probe contract (kept consistent
+        with /health)."""
+        with patch.object(main.fgl_service, "health_check", return_value=True):
+            response = client.head("/ready")
+        assert response.status_code == 200
+        assert response.content == b""
+
+    def test_ready_endpoint_503_when_dependency_is_unreachable(self):
+        """A failing dependency (MongoDB down) must surface as a 503 so
+        kubelet keeps the pod out of the Service endpoints. The body has
+        to be JSON so the response is consumable by humans inspecting it."""
+        with patch.object(main.fgl_service, "health_check", return_value=False):
+            response = client.get("/ready")
+        assert response.status_code == 503
+        body = response.json()
+        assert body["status"] == "not_ready"
+        assert "detail" in body
+
     def test_frontend_handler_js_file(self, served_assets, mock_file_response):
         """A real .js dist file is served via FileResponse with the JS media type"""
         client.get("/app.js")
