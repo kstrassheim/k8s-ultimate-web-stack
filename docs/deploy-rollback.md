@@ -20,7 +20,7 @@ image tag to an immutable `:sha-<sha>` reference — see
 
 | Channel | What tracks | What reverts it |
 |---------|-------------|-----------------|
-| dev (`ultimate-web-stack-dev`) | latest commit on `main` | push a revert commit to `main` (CI rebuilds `:dev`); or swap `:sha-<sha>` (Option B) |
+| dev (`ultimate-web-stack-dev`) | latest commit on `main` | merge a revert PR into `main` (CI rebuilds `:dev`); or swap `:sha-<sha>` (Option B) |
 | test (`ultimate-web-stack-test`) | highest semver git tag (`vX.Y.Z`, `[0-9]*`) | push a new patch tag with the revert; CI rebuilds `:test` immediately |
 | prod (`ultimate-web-stack`) | highest semver git tag (`vX.Y.Z`, `[0-9]*`) | push a new patch tag **and then approve the GitHub `prod` environment** so CI rebuilds `:prod` |
 
@@ -101,7 +101,7 @@ through kubectl.
 2. Identify the bad release and the last known-good release:
    ```bash
    git fetch --tags
-   git tag --sort=-v:refname | grep -E '^[0-9]+\.' | head -10
+   git tag --sort=-v:refname | head -20
    git log --oneline -20
    ```
 
@@ -110,9 +110,9 @@ through kubectl.
    node with kubeconfig + the `argocd-server` Service):
    ```bash
    argocd app list
-   argocd app history ultimate-web-stack      --revision 0
-   argocd app history ultimate-web-stack-test --revision 0
-   argocd app history ultimate-web-stack-dev  --revision 0
+   argocd app history ultimate-web-stack
+   argocd app history ultimate-web-stack-test
+   argocd app history ultimate-web-stack-dev
    ```
    The output tells you:
    - The source revision ArgoCD is currently synced to (the "what
@@ -140,12 +140,28 @@ state.
 ```bash
 git checkout main
 git pull origin main
+ROLLBACK_BRANCH="rollback/$(git rev-parse --short <bad-commit-sha>)"
+git switch -c "$ROLLBACK_BRANCH"
 git revert <bad-commit-sha>
 # If the bad change was a merge commit (squash merges look like
 # regular commits, so this only applies to a true merge with two
 # parents), pass -m 1 to keep the mainline:
 #   git revert -m 1 <merge-commit-sha>
-git push origin main
+git push -u origin "$ROLLBACK_BRANCH"
+```
+
+Open and merge the revert through the normal PR workflow — do not
+push the revert directly to protected `main`:
+
+```bash
+gh pr create --base main --head "$ROLLBACK_BRANCH" \
+  --title "Revert bad deploy <bad-commit-sha>" \
+  --body "Emergency rollback of <bad-commit-sha>."
+# After the required checks and review:
+gh pr merge "$ROLLBACK_BRANCH" --squash
+# Put the locally checked-out branch back on the merged main before tagging:
+git checkout main
+git pull origin main
 ```
 
 If the bad change is on a non-`main` branch, branch off `main`,
@@ -202,10 +218,14 @@ kubectl rollout status deployment/web -n ultimate-web-stack-test --timeout=300s
 kubectl rollout status deployment/web -n ultimate-web-stack-dev  --timeout=300s
 
 # Per PR #100, the readiness probe hits /ready which checks MongoDB.
-# Confirm the new pod is serving:
-kubectl exec -n ultimate-web-stack      deploy/web -- curl -sf http://localhost:8000/ready
-kubectl exec -n ultimate-web-stack-test deploy/web -- curl -sf http://localhost:8000/ready
-kubectl exec -n ultimate-web-stack-dev  deploy/web -- curl -sf http://localhost:8000/ready
+# The web image is Python-based and does not include curl. Confirm the new
+# pod is serving with Python's stdlib instead:
+kubectl exec -n ultimate-web-stack      deploy/web -- \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8000/ready", timeout=10).read().decode())'
+kubectl exec -n ultimate-web-stack-test deploy/web -- \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8000/ready", timeout=10).read().decode())'
+kubectl exec -n ultimate-web-stack-dev  deploy/web -- \
+  python -c 'import urllib.request; print(urllib.request.urlopen("http://localhost:8000/ready", timeout=10).read().decode())'
 
 # Confirm ArgoCD sees the app as Synced + Healthy:
 argocd app get ultimate-web-stack
@@ -281,16 +301,34 @@ verified.** Otherwise:
 - Anyone who later investigates "why isn't dev picking up commits?"
   has to dig through git history to find this rollback commit.
 
-The cleanest sequence is **one revert commit + one restore commit**,
-both pushed together:
+The cleanest sequence is **one rollback branch + one restore commit**.
+Keep both changes on the rollback branch, open a PR, and merge through
+the required checks — never push either change directly to protected
+`main`:
 
 ```bash
+# From a clean checkout of main:
 git checkout main
-# Make the revert change + commit + push (step B.2)
-git push origin main
-# ... wait for ArgoCD to roll back and you to verify ...
-# Make the restore change + commit + push
-git push origin main
+git pull origin main
+git switch -c rollback/dev-<timestamp> main
+# Make the image swap (step B.2), then:
+git add k8s/environments/dev/kustomization.yaml
+git commit -m "Roll back dev web image"
+git push -u origin HEAD
+gh pr create --base main --head "$(git branch --show-current)" \
+  --title "Roll back dev web image" \
+  --body "Emergency dev image rollback."
+# After the PR is approved and CI is green:
+gh pr merge "$(git branch --show-current)" --squash
+
+# Then restore newTag: dev in a second commit and open a normal follow-up PR:
+git add k8s/environments/dev/kustomization.yaml
+git commit -m "Restore dev web image tracking"
+git push -u origin HEAD
+gh pr create --base main --head "$(git branch --show-current)" \
+  --title "Restore dev web image tracking" \
+  --body "Restore the normal mutable dev tag after rollback."
+gh pr merge "$(git branch --show-current)" --squash
 ```
 
 This option does **not** work for test or prod because CI only
@@ -383,7 +421,11 @@ manifests in this repo:
   format)
 
 and `kubectl kustomize k8s/environments/<env>` to confirm the image
-tags resolve to `web:dev` / `web:test` / `web:prod` as documented.
+tags resolve to `web:dev` / `web:test` / `web:prod` as documented. The
+static audit also caught and corrected the readiness check: the web
+image does not contain `curl`, so the runbook now uses its Python stdlib
+to call `/ready`. The history commands were checked against Argo CD's
+current command reference and use only supported flags.
 
 No commands were executed against a live cluster — the agent
 authoring this PR does not have cluster RBAC (the `openclaw`
