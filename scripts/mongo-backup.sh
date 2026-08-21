@@ -25,6 +25,19 @@ RETENTION_DAYS="${RETENTION_DAYS:-7}"
 # not blocking legitimately small databases.
 REQUIRED_FREE_KB="${REQUIRED_FREE_KB:-102400}"
 
+# ---- Redact the password segment of MONGO_URI for logging ----
+# As of issue #104, MONGO_URI is sourced from the `mongodb-credentials`
+# Secret and contains the backup user's password (e.g.
+# `mongodb://backup:<pw>@mongodb:27017/?authSource=admin`). Without this
+# redaction the BACKUP STARTING log line below would write that password
+# verbatim to stderr on every CronJob run, where it is captured by
+# `kubectl logs` and shipped to any log aggregator scraping kubelet logs
+# (Loki / Elasticsearch / journald). The actual MONGO_URI is unchanged —
+# only the log-time string is masked. Pattern matches anything between
+# `://user:` and the next `@`; the no-auth URI default
+# (`mongodb://mongodb:27017`) has no match and passes through unchanged.
+REDACTED_URI="$(printf '%s' "${MONGO_URI}" | sed -E 's|(://[^:]+:)[^@]+(@)|\1***\2|')"
+
 # ---- Logging helpers (stderr so kubectl logs picks them up) ----
 log()  { printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
 fail() {
@@ -33,7 +46,7 @@ fail() {
 }
 
 # ---- Pre-flight: destination must exist and be writable ----
-log "BACKUP STARTING source=${MONGO_URI} db=${MONGO_DB} destination=${DEST_DIR}"
+log "BACKUP STARTING source=${REDACTED_URI} db=${MONGO_DB} destination=${DEST_DIR}"
 
 if [ ! -d "${DEST_DIR}" ]; then
   if mkdir -p "${DEST_DIR}" 2>/dev/null; then

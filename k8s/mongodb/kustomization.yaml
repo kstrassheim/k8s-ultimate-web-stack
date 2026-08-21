@@ -3,4 +3,5 @@ kind: Kustomization
 
 resources:
   - mongodb.yaml
+  - mongodb-entrypoint-configmap.yaml
   - backup-cronjob.yaml

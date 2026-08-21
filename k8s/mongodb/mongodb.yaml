@@ -93,21 +93,98 @@ spec:
       containers:
         - name: mongodb
           image: mongo:8.0
+          # Closes issue #104: instead of running mongod directly, run the
+          # two-phase entrypoint that bootstraps users (root / app / backup)
+          # against a no-auth temporary mongod on 127.0.0.1, then `exec`s the
+          # real mongod with --auth. See scripts/mongo-entrypoint.sh and
+          # k8s/mongodb/mongodb-entrypoint-configmap.yaml.
+          #
+          # Credentials come from the mongodb-credentials Secret out-of-band
+          # (same pattern as the registry-pull-secret referenced from the web
+          # Deployment). Operator creates one per namespace:
+          #
+          #   ROOT_PW=$(openssl rand -hex 24)
+          #   APP_PW=$(openssl rand -hex 24)
+          #   BACKUP_PW=$(openssl rand -hex 24)
+          #   kubectl create secret generic mongodb-credentials \
+          #     --from-literal=MONGO_INITDB_ROOT_USERNAME=mongo-root \
+          #     --from-literal=MONGO_INITDB_ROOT_PASSWORD="${ROOT_PW}" \
+          #     --from-literal=APP_DB_USERNAME=mongo-app \
+          #     --from-literal=APP_DB_PASSWORD="${APP_PW}" \
+          #     --from-literal=BACKUP_DB_USERNAME=mongo-backup \
+          #     --from-literal=BACKUP_DB_PASSWORD="${BACKUP_PW}" \
+          #     --from-literal=mongodb-uri="mongodb://mongo-app:${APP_PW}@mongodb:27017/?authSource=admin" \
+          #     --from-literal=mongo-uri="mongodb://mongo-backup:${BACKUP_PW}@mongodb:27017/?authSource=admin" \
+          #     -n <namespace>
+          #
+          # NO credential is ever committed to git. The Secret data values
+          # are referenced via secretKeyRef below; the URI strings are also
+          # stored in the Secret so the web / backup pods just envFrom them
+          # without needing shell composition in the manifest.
+          command: ["/bin/bash", "/scripts/mongo-entrypoint.sh"]
           args:
             - --dbpath
             - /data/db
             - --bind_ip
             - 0.0.0.0
+            - --auth
           ports:
             - containerPort: 27017
               name: mongodb
+          env:
+            # All six bootstrap vars come from the Secret. The entrypoint
+            # script reads them as $MONGO_INITDB_ROOT_USERNAME etc. and
+            # passes them to mongosh via process.env.* (never via argv, so
+            # the password never appears in /proc/PID/cmdline).
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGO_INITDB_ROOT_USERNAME
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: MONGO_INITDB_ROOT_PASSWORD
+            - name: APP_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: APP_DB_USERNAME
+            - name: APP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: APP_DB_PASSWORD
+            - name: BACKUP_DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: BACKUP_DB_USERNAME
+            - name: BACKUP_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: BACKUP_DB_PASSWORD
           volumeMounts:
             - name: mongodb-data
               mountPath: /data/db
+            # /scripts/mongo-entrypoint.sh is the two-phase startup script
+            # sourced from the mongo-entrypoint-script ConfigMap. defaultMode
+            # 0o555 makes the file readable + executable for the mongodb
+            # user (UID 999). Without `executable: true` on the mount the
+            # ConfigMap projection would be 0o444 and bash would refuse to
+            # run it.
+            - name: entrypoint-script
+              mountPath: /scripts
+              readOnly: true
             # mongod's docker-entrypoint.sh uses `$TMPDIR` (default /tmp) for
             # the JSON config files it builds when --config is supplied. With
             # readOnlyRootFilesystem=true on the main container, that path
             # must be writable — same pattern as the mongo-backup CronJob.
+            # The two-phase entrypoint ALSO writes /tmp/mongod-bootstrap.log
+            # and /tmp/mongod-bootstrap.pid here while the temporary mongod
+            # runs in the background during phase 1.
             - name: tmp
               mountPath: /tmp
           resources:
@@ -144,11 +221,20 @@ spec:
         # Memory-backed emptyDir for /tmp. Sized small — mongod's
         # docker-entrypoint.sh writes a couple of kilobyte JSON files there
         # when --config is set; we don't pass --config, but the entrypoint
-        # still allocates TMPDIR unconditionally.
+        # still allocates TMPDIR unconditionally. The two-phase startup also
+        # writes /tmp/mongod-bootstrap.log + pidfile here while the temp
+        # mongod runs in phase 1; those are a few KB each, well under 16Mi.
         - name: tmp
           emptyDir:
             medium: Memory
             sizeLimit: 16Mi
+        # ConfigMap projection carrying scripts/mongo-entrypoint.sh. defaultMode
+        # 0o555 makes the file executable for the mongodb user (UID 999).
+        # Mounted read-only because the script never writes to it.
+        - name: entrypoint-script
+          configMap:
+            name: mongo-entrypoint-script
+            defaultMode: 0o555
   volumeClaimTemplates:
     - metadata:
         name: mongodb-data

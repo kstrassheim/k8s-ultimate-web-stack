@@ -60,8 +60,23 @@ spec:
             - containerPort: 8000
               name: http
           env:
+            # Closes issue #104: MONGODB_URI now carries credentials. The
+            # full URI (including username + password) is stored in the
+            # mongodb-credentials Secret under the `mongodb-uri` key so the
+            # URI composition lives in one place (the Secret) instead of
+            # being split between manifest + Secret. The Secret itself is
+            # created out-of-band per namespace (same pattern as the
+            # registry-pull-secret above); see k8s/mongodb/mongodb.yaml
+            # for the create command and the key list. The env value below
+            # is intentionally NOT a literal — applying this manifest
+            # without first creating the Secret leaves MONGODB_URI unset,
+            # which is the desired loud failure mode (vs a silent no-auth
+            # connection).
             - name: MONGODB_URI
-              value: mongodb://mongodb:27017
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: mongodb-uri
             - name: MONGODB_DB
               value: future_gadget_lab
             - name: MOCK

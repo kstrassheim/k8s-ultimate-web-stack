@@ -182,6 +182,50 @@ rm -rf "${sb}"
 # We simulate the EROFS by pointing TMPDIR at a path that mktemp cannot
 # create under (a non-directory path); with set -e + the new early trap,
 # the script must still emit "BACKUP FAILED destination=… reason=…".
+# ---- Regression coverage for reviewer's CHANGES REQUIRED on PR #118
+# (closes #104): MONGO_URI is sourced from the `mongodb-credentials`
+# Secret and now carries the backup user's password. The BACKUP STARTING
+# log line must NOT echo that password to stderr — anyone with
+# `kubectl logs` access (broader than Secret read in many setups) walks
+# away with `readAnyDatabase` credentials otherwise. The script masks the
+# password segment before logging; the test asserts the literal password
+# is absent and the redacted marker is present.
+echo "==> scenario: credentialed MONGO_URI is redacted in logs"
+sb="$(make_sandbox)"
+out_file="$(mktemp)"
+err_file="$(mktemp)"
+env -i \
+  HOME="${HOME}" \
+  PATH="${sb}/bin:/usr/bin:/bin" \
+  MONGO_URI='mongodb://backup:supersecretpw@mongodb:27017/?authSource=admin' \
+  MONGO_DB="future_gadget_lab" \
+  DEST_DIR="${sb}/dest" \
+  bash "${SCRIPT_UNDER_TEST}" >"${out_file}" 2>"${err_file}"
+actual_exit=$?
+if [ "${actual_exit}" -eq 0 ]; then
+  pass "[redact credentials] happy-path backup still succeeds with credentialed URI"
+else
+  fail "[redact credentials] expected exit 0, got ${actual_exit}; stderr=$(tr '\n' ' ' < "${err_file}")"
+fi
+if ! grep -q 'supersecretpw' "${err_file}" 2>/dev/null; then
+  pass "[redact credentials] password literal absent from stderr"
+else
+  fail "[redact credentials] password literal leaked into stderr: $(tr '\n' ' ' < "${err_file}")"
+fi
+if grep -q 'backup:\*\*\*@' "${err_file}" 2>/dev/null; then
+  pass "[redact credentials] redacted marker present in stderr"
+else
+  fail "[redact credentials] expected 'backup:***@' marker missing in stderr: $(tr '\n' ' ' < "${err_file}")"
+fi
+if grep -q 'BACKUP STARTING' "${err_file}" 2>/dev/null \
+   && grep -q "destination=${sb}/dest" "${err_file}" 2>/dev/null; then
+  pass "[redact credentials] BACKUP STARTING + destination still present"
+else
+  fail "[redact credentials] BACKUP STARTING or destination missing: $(tr '\n' ' ' < "${err_file}")"
+fi
+rm -f "${out_file}" "${err_file}"
+rm -rf "${sb}"
+
 echo "==> scenario: TMPDIR unwritable (readOnlyRootFilesystem: true, no /tmp mount)"
 sb="$(make_sandbox)"
 out_file="$(mktemp)"
