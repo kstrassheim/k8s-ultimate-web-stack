@@ -48,13 +48,21 @@ data:
     RETENTION_DAYS="${RETENTION_DAYS:-7}"
     REQUIRED_FREE_KB="${REQUIRED_FREE_KB:-102400}"
 
+    # Closes issue #104: MONGO_URI now carries the backup user's password
+    # (sourced from the mongodb-credentials Secret via env below). Redact
+    # the password segment before logging so `kubectl logs` / Loki /
+    # Elasticsearch do not capture it on every CronJob run. The actual
+    # MONGO_URI is unchanged — only the log-time string is masked; the
+    # no-auth default URI has no match and passes through untouched.
+    REDACTED_URI="$(printf '%s' "${MONGO_URI}" | sed -E 's|(://[^:]+:)[^@]+(@)|\1***\2|')"
+
     log()  { printf '[%s] %s\n' "$(date -u +'%Y-%m-%dT%H:%M:%SZ')" "$*" >&2; }
     fail() {
       log "BACKUP FAILED destination=${DEST_DIR} reason=${1}"
       exit 1
     }
 
-    log "BACKUP STARTING source=${MONGO_URI} db=${MONGO_DB} destination=${DEST_DIR}"
+    log "BACKUP STARTING source=${REDACTED_URI} db=${MONGO_DB} destination=${DEST_DIR}"
 
     if [ ! -d "${DEST_DIR}" ]; then
       if mkdir -p "${DEST_DIR}" 2>/dev/null; then
