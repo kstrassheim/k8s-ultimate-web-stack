@@ -4,8 +4,15 @@
 - op: replace
   path: /spec/jobTemplate/spec/template/spec/containers/0/env
   value:
+    # Closes issue #104: MONGO_URI comes from the mongodb-credentials
+    # Secret (key `mongo-uri`). The Secret is per-namespace (same
+    # out-of-band pattern as registry-pull-secret). See
+    # k8s/mongodb/mongodb.yaml for the create command.
     - name: MONGO_URI
-      value: mongodb://mongodb:27017
+      valueFrom:
+        secretKeyRef:
+          name: mongodb-credentials
+          key: mongo-uri
     - name: MONGO_DB
       value: future_gadget_lab_test
     - name: DEST_DIR

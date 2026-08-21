@@ -150,6 +150,54 @@ jobs:
           fi
           echo "OK: inline ConfigMap body matches scripts/mongo-backup.sh"
 
+  bash-entrypoint-tests:
+    # Smoke tests + drift guard for scripts/mongo-entrypoint.sh.
+    #
+    # Mirrors bash-backup-tests for the two-phase mongod entrypoint that
+    # closes issue #104. The script under test wraps mongod so the
+    # container bootstraps root/app/backup users against a no-auth temp
+    # mongod, then `exec`s the real mongod with --auth. The smoke tests
+    # use shimmed mongod/mongosh binaries to verify the entrypoint's
+    # branching (happy path, mongod never ready, provision failure,
+    # pass-through when no MONGO_INITDB_ROOT_USERNAME is set, --shutdown
+    # failure falling back to SIGTERM, idempotency on restart).
+    #
+    # The drift guard diffs the inline ConfigMap body in
+    # k8s/mongodb/mongodb-entrypoint-configmap.yaml against
+    # scripts/mongo-entrypoint.sh, so there is one source of truth
+    # (scripts/, exercised by the smoke tests) and zero risk of the
+    # inline copy silently drifting — same pattern as bash-backup-tests.
+    name: Bash Entrypoint Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check on the script
+        run: bash -n scripts/mongo-entrypoint.sh
+
+      - name: Run entrypoint script smoke tests
+        run: bash scripts/mongo-entrypoint_test.sh
+
+      - name: Verify inline ConfigMap body matches scripts/mongo-entrypoint.sh
+        run: |
+          set -euo pipefail
+          awk '
+            /^  mongo-entrypoint.sh: \|/ { in_data = 1; next }
+            in_data && /^[^ ]/           { in_data = 0 }
+            in_data                       { sub(/^    /, ""); print }
+          ' k8s/mongodb/mongodb-entrypoint-configmap.yaml \
+            | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' \
+            > /tmp/inline_entrypoint.sh
+          grep -v '^[[:space:]]*#' scripts/mongo-entrypoint.sh \
+            | grep -v '^[[:space:]]*$' \
+            > /tmp/file_entrypoint.sh
+          if ! diff -u /tmp/file_entrypoint.sh /tmp/inline_entrypoint.sh; then
+            echo "::error::The inline ConfigMap body in k8s/mongodb/mongodb-entrypoint-configmap.yaml has drifted from scripts/mongo-entrypoint.sh. Update the inline copy (or vice-versa) and re-run CI." >&2
+            exit 1
+          fi
+          echo "OK: inline ConfigMap body matches scripts/mongo-entrypoint.sh"
+
   terraform-validate:
     name: Terraform Validate
     runs-on: ubuntu-latest

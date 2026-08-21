@@ -36,6 +36,12 @@ data:
     # so the file in scripts/ remains the only source of truth to edit.
     set -euo pipefail
 
+    # Closes issue #104: MONGO_URI now arrives from the mongodb-credentials
+    # Secret (key `mongo-uri`, mounted via env below) carrying the backup
+    # user's credentials. The ${MONGO_URI:-...} default is intentionally
+    # left as the no-auth fallback for the smoke-test shim (scripts/
+    # mongo-backup_test.sh), which never invokes a real mongod; the
+    # CronJob's env injects the real value before the script runs.
     MONGO_URI="${MONGO_URI:-mongodb://mongodb:27017}"
     MONGO_DB="${MONGO_DB:-future_gadget_lab}"
     DEST_DIR="${DEST_DIR:-/backup}"
@@ -201,8 +207,19 @@ spec:
               imagePullPolicy: IfNotPresent
               command: ["/bin/bash", "/scripts/mongo-backup.sh"]
               env:
+                # Closes issue #104: MONGO_URI now carries credentials.
+                # Same pattern as the web Deployment's MONGODB_URI: the
+                # full URI lives in the mongodb-credentials Secret under
+                # `mongo-uri`, mounted via secretKeyRef. The CronJob's SA
+                # has no RBAC on Secrets, so this works because kubelet
+                # resolves the Secret reference on the node at pod start.
+                # See k8s/mongodb/mongodb.yaml for the create command and
+                # the key list.
                 - name: MONGO_URI
-                  value: mongodb://mongodb:27017
+                  valueFrom:
+                    secretKeyRef:
+                      name: mongodb-credentials
+                      key: mongo-uri
                 - name: MONGO_DB
                   # Set per-env via patch — the dev / test overlays should
                   # override to point at the right database (see env patches
