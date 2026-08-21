@@ -14,3 +14,12 @@
       value: /app
     - name: TF_ENV
       value: dev
+    # Carry-over from base k8s/web/web.yaml — needed because this patch
+    # replaces the env block wholesale. PYTHONDONTWRITEBYTECODE keeps Python
+    # from creating __pycache__/ on the read-only rootfs, TMPDIR pins
+    # tempfile / OpenSSL PRNG state to /tmp (the emptyDir mounted writable).
+    # See PR #103 / issue #103.
+    - name: PYTHONDONTWRITEBYTECODE
+      value: "1"
+    - name: TMPDIR
+      value: /tmp
