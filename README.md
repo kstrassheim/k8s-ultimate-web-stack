@@ -270,6 +270,10 @@ MongoDB connection uses the Kubernetes-internal Service DNS (`mongodb://mongodb:
 - **ArgoCD replaces Azure App Service deployments** — GitOps sync instead of `az webapp up`
 - **Self-hosted registry** — push with `--insecure` flag for Docker/Podman
 
+## Operations
+
+- **Rolling back a bad deploy** — see [`docs/deploy-rollback.md`](docs/deploy-rollback.md). Covers the `git revert + new tag` procedure, why `kubectl rollout undo` does not work here, what is NOT reverted (data, schema, Entra App Reg), and how to restore MongoDB from the nightly backup if the bad release corrupted data.
+
 ## Reference
 
 - Parent project: [ultimate-web-stack](https://github.com/kstrassheim/ultimate-web-stack)
