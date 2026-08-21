@@ -31,6 +31,65 @@ spec:
       labels:
         app: mongodb
     spec:
+      # runAsUser=999 matches the `mongodb` user created in the upstream
+      # mongo:8.0 image Dockerfile (https://github.com/docker-library/mongo/blob/master/8.0/Dockerfile).
+      # fsGroup=999 makes kubelet recursive-chgrp the data volume on pod
+      # startup, but it does NOT chown USER — only GROUP — so files written
+      # by the old (root-running) pod stay owned by root. The initContainer
+      # below fixes that on every restart by running as root and chowning
+      # /data/db to 999:999 before mongod starts.
+      #
+      # The StatefulSet runs replicas=1 and the existing PVC was populated
+      # while no pod-level securityContext was set (i.e. the mongod process
+      # ran as root). The initContainer's chown is the seam between "old
+      # data on disk" and "new non-root runner".
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+      initContainers:
+        - name: fix-data-ownership
+          # Same image as mongod — guarantees the `mongodb` user/group are
+          # defined with the same UID/GID we're about to chown to.
+          image: mongo:8.0
+          imagePullPolicy: IfNotPresent
+          # `find -L /data/db \! -user 999 -exec chown 999:999 {} +` mirrors
+          # the chown that the upstream docker-entrypoint.sh does *only* when
+          # mongod is started as root. Because this StatefulSet runs as
+          # non-root (runAsUser=999), the entrypoint's auto-chown branch is
+          # skipped, so we do it explicitly here. Skipping files already
+          # owned by the target UID keeps the operation cheap on subsequent
+          # restarts when there's nothing to fix.
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -eu
+              find -L /data/db \! -user 999 -exec chown 999:999 {} +
+              find -L /data/db \! -group 999 -exec chgrp 999 {} +
+          # This init container must run as root to perform the chown. It
+          # still drops privileges and the read-only rootfs constraint, just
+          # to the bare minimum needed for a one-shot chown: a read-only root
+          # filesystem is fine because find/chown don't write to /.
+          #
+          # `runAsNonRoot: false` explicitly overrides the pod-level
+          # `runAsNonRoot: true`. The kubelet refuses to start any container
+          # whose effective securityContext has both `runAsNonRoot: true`
+          # and `runAsUser: 0`, so we have to relax the non-root flag for
+          # this one container. The main `mongodb` container still runs as
+          # 999 (verified by `kubectl get pod ... -o jsonpath='{.spec}'`).
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: mongodb-data
+              mountPath: /data/db
       containers:
         - name: mongodb
           image: mongo:8.0
@@ -45,6 +104,12 @@ spec:
           volumeMounts:
             - name: mongodb-data
               mountPath: /data/db
+            # mongod's docker-entrypoint.sh uses `$TMPDIR` (default /tmp) for
+            # the JSON config files it builds when --config is supplied. With
+            # readOnlyRootFilesystem=true on the main container, that path
+            # must be writable — same pattern as the mongo-backup CronJob.
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               cpu: 250m
@@ -52,6 +117,14 @@ spec:
             limits:
               cpu: "1"
               memory: 1Gi
+          # Hardened per the CronJob precedent (k8s/mongodb/backup-cronjob.yaml).
+          # The container image itself does not need /tmp or any other
+          # in-container path to be writable beyond what `tmp` provides.
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           # TCP checks: `mongosh` startup exceeds the probe timeout on the
           # ARM node, so an exec ping flaps and kubelet kills mongod.
           livenessProbe:
@@ -67,6 +140,15 @@ spec:
             initialDelaySeconds: 10
             periodSeconds: 5
             timeoutSeconds: 5
+      volumes:
+        # Memory-backed emptyDir for /tmp. Sized small — mongod's
+        # docker-entrypoint.sh writes a couple of kilobyte JSON files there
+        # when --config is set; we don't pass --config, but the entrypoint
+        # still allocates TMPDIR unconditionally.
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
   volumeClaimTemplates:
     - metadata:
         name: mongodb-data
