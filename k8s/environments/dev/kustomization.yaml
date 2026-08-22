@@ -28,10 +28,3 @@ patches:
     target:
       kind: CronJob
       name: mongo-backup
-  # SCRATCH: this patch file does not exist. It is here to demonstrate
-  # that the new kustomize-validate CI job (PR #122 / issue #111) catches
-  # a broken overlay. Will be removed in the next commit.
-  - path: patch-does-not-exist.yaml
-    target:
-      kind: ConfigMap
-      name: nothing
