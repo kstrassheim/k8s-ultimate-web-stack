@@ -94,6 +94,28 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
+              # CHOWN is the one capability this container cannot do its job
+              # without, and dropping ALL took it away from root as well.
+              #
+              # Being uid 0 is not what permits `chown`; holding CAP_CHOWN is,
+              # and root holds it only because it is normally granted every
+              # capability. Drop ALL and uid 0 gets EPERM from the kernel like
+              # anybody else — which is exactly what happened:
+              #
+              #   chown: changing ownership of
+              #     '/data/db/.mongodb/mongosh/..._log': Operation not permitted
+              #
+              # With `set -eu` above, the first such file ended the script, the
+              # init container never completed, and the StatefulSet sat in
+              # Init:CrashLoopBackOff for 253 restarts over 21 hours.
+              #
+              # Adding CHOWN back is not a hole in the hardening: this is a
+              # one-shot init container that runs `find | chown` on one volume
+              # and exits, with a read-only root filesystem, no privilege
+              # escalation, and every other capability still dropped. The main
+              # mongod container beside it keeps `drop: ["ALL"]` and runs as
+              # 999 with nothing added.
+              add: ["CHOWN"]
           volumeMounts:
             - name: mongodb-data
               mountPath: /data/db
