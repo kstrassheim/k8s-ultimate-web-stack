@@ -863,3 +863,500 @@ class TestWorldlineEndpoints:
         
         # Verify no automatic response to Admin
         assert len(sent_messages) == 0
+
+
+# ---------------------------------------------------------------------------
+# Issue #113 — server-side auth on /future-gadget-lab/*
+#
+# The original implementation accepted any request without authentication on
+# both the REST endpoints and the two WebSocket endpoints. These tests pin
+# the new contract:
+#
+#   * every REST route requires a valid bearer token (401 without one);
+#   * mutations additionally require the `Admin` role (403 for plain Users);
+#   * the WebSocket handlers call `auth_connect()` (not the unauth `connect()`),
+#     so the manager's `receiver_roles` actually get enforced and a connection
+#     without a token frame is closed with code 1008.
+# ---------------------------------------------------------------------------
+
+
+def _route_has_security_dependency(router, method, path_prefix):
+    """A route is protected iff it has at least one security-scoped sub-
+    dependency on its resolved dependant tree (the Security(azure_scheme,
+    scopes=...) we added). In FastAPI's dependant tree, a Security() call
+    appears as a child dependant with non-empty `oauth_scopes`."""
+    for route in router.routes:
+        if not hasattr(route, "methods"):
+            continue
+        if method.upper() not in route.methods:
+            continue
+        if not route.path.startswith(path_prefix):
+            continue
+        stack = list(route.dependant.dependencies)
+        seen = set()
+        while stack:
+            dep = stack.pop()
+            if id(dep) in seen:
+                continue
+            seen.add(id(dep))
+            if getattr(dep, "oauth_scopes", None):
+                return True
+            stack.extend(dep.dependencies)
+    return False
+
+
+def _route_has_required_roles_decorator(router, method, path):
+    """The `@required_roles(...)` decorator wraps the coroutine in a
+    `@functools.wraps(func)` wrapper, which sets `__wrapped__` on the result.
+    Routes WITHOUT required_roles stay as the bare async function and have no
+    `__wrapped__` attribute. (FastAPI itself does not wrap endpoints this
+    way, so this is a clean signal.)"""
+    for route in router.routes:
+        if not hasattr(route, "methods"):
+            continue
+        if method.upper() not in route.methods:
+            continue
+        if route.path != path:
+            continue
+        return hasattr(route.endpoint, "__wrapped__")
+    return False
+
+
+class TestAuthRequirementsOnRoutes:
+    """Static checks: every /future-gadget-lab/* REST route has a Security
+    dependency wired up by the fix, and the mutation routes additionally have
+    the `required_roles` decorator applied."""
+
+    def test_all_read_routes_have_security_dependency(self):
+        for method, path_prefix in [
+            ("GET", "/lab-experiments"),
+            ("GET", "/experiments"),
+            ("GET", "/divergence-readings"),
+            ("GET", "/divergence-readings/latest"),
+            ("GET", "/worldline/status"),
+            ("GET", "/worldline-status"),
+            ("GET", "/worldline/history"),
+            ("GET", "/worldline-history"),
+        ]:
+            assert _route_has_security_dependency(
+                future_gadget_api_router, method, path_prefix
+            ), f"{method} {path_prefix}* is missing Security(...)"
+
+    def test_all_get_by_id_routes_have_security_dependency(self):
+        for path in ("/lab-experiments/{experiment_id}", "/experiments/{experiment_id}"):
+            assert _route_has_security_dependency(
+                future_gadget_api_router, "GET", path
+            ), f"GET {path} is missing Security(...)"
+
+    def test_all_mutation_routes_have_security_dependency(self):
+        for method, path_prefix in [
+            ("POST", "/lab-experiments"),
+            ("POST", "/experiments"),
+            ("POST", "/divergence-readings"),
+        ]:
+            assert _route_has_security_dependency(
+                future_gadget_api_router, method, path_prefix
+            ), f"{method} {path_prefix} is missing Security(...)"
+
+    def test_all_put_delete_routes_have_security_dependency(self):
+        for method in ("PUT", "DELETE"):
+            for path in (
+                "/lab-experiments/{experiment_id}",
+                "/experiments/{experiment_id}",
+            ):
+                assert _route_has_security_dependency(
+                    future_gadget_api_router, method, path
+                ), f"{method} {path} is missing Security(...)"
+
+    def test_all_mutations_require_admin_role(self):
+        """Every POST/PUT/DELETE on /future-gadget-lab/* carries
+        @required_roles(['Admin'])."""
+        for method, path in [
+            ("POST", "/lab-experiments"),
+            ("POST", "/experiments"),
+            ("POST", "/divergence-readings"),
+            ("PUT", "/lab-experiments/{experiment_id}"),
+            ("PUT", "/experiments/{experiment_id}"),
+            ("DELETE", "/lab-experiments/{experiment_id}"),
+            ("DELETE", "/experiments/{experiment_id}"),
+        ]:
+            assert _route_has_required_roles_decorator(
+                future_gadget_api_router, method, path
+            ), f"{method} {path} is missing @required_roles(['Admin'])"
+
+    def test_get_routes_do_not_require_specific_role(self):
+        """Reads are open to any authenticated user — no required_roles check."""
+        for method, path in [
+            ("GET", "/lab-experiments"),
+            ("GET", "/experiments"),
+            ("GET", "/divergence-readings"),
+            ("GET", "/divergence-readings/latest"),
+            ("GET", "/worldline/status"),
+            ("GET", "/worldline-status"),
+            ("GET", "/worldline/history"),
+            ("GET", "/worldline-history"),
+        ]:
+            assert not _route_has_required_roles_decorator(
+                future_gadget_api_router, method, path
+            ), f"{method} {path} should NOT have required_roles"
+
+
+class TestRestEndpointsRejectUnauthenticatedRequests:
+    """Integration tests against the live FastAPI app. With the azure_scheme
+    dependency overridden to raise 401, every route must return 401 — proving
+    the Security dependency is actually resolved by FastAPI on each path."""
+
+    @pytest.fixture
+    def unauth_client(self):
+        from fastapi import HTTPException, status as http_status
+
+        app = FastAPI()
+        app.include_router(future_gadget_api_router)
+
+        async def reject_all():
+            raise HTTPException(
+                status_code=http_status.HTTP_401_UNAUTHORIZED,
+                detail="Not authenticated",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        app.dependency_overrides[azure_scheme] = reject_all
+        return TestClient(app)
+
+    def test_get_experiments_rejects_no_auth(self, unauth_client):
+        assert unauth_client.get("/lab-experiments").status_code == 401
+        assert unauth_client.get("/experiments").status_code == 401
+
+    def test_get_experiment_by_id_rejects_no_auth(self, unauth_client):
+        assert unauth_client.get("/lab-experiments/EXP-1").status_code == 401
+        assert unauth_client.get("/experiments/EXP-1").status_code == 401
+
+    def test_get_divergence_readings_rejects_no_auth(self, unauth_client):
+        assert unauth_client.get("/divergence-readings").status_code == 401
+        assert unauth_client.get("/divergence-readings/latest").status_code == 401
+
+    def test_get_worldline_rejects_no_auth(self, unauth_client):
+        assert unauth_client.get("/worldline/status").status_code == 401
+        assert unauth_client.get("/worldline-status").status_code == 401
+        assert unauth_client.get("/worldline/history").status_code == 401
+        assert unauth_client.get("/worldline-history").status_code == 401
+
+    def test_post_experiments_rejects_no_auth(self, unauth_client):
+        payload = {
+            "name": "x",
+            "description": "x",
+            "status": "planned",
+            "creator_id": "x",
+        }
+        assert unauth_client.post("/experiments", json=payload).status_code == 401
+        assert unauth_client.post("/lab-experiments", json=payload).status_code == 401
+
+    def test_put_experiments_rejects_no_auth(self, unauth_client):
+        assert unauth_client.put("/experiments/EXP-1", json={"name": "y"}).status_code == 401
+        assert unauth_client.put("/lab-experiments/EXP-1", json={"name": "y"}).status_code == 401
+
+    def test_delete_experiments_rejects_no_auth(self, unauth_client):
+        assert unauth_client.delete("/experiments/EXP-1").status_code == 401
+        assert unauth_client.delete("/lab-experiments/EXP-1").status_code == 401
+
+    def test_post_divergence_reading_rejects_no_auth(self, unauth_client):
+        payload = {"reading": 1.0, "status": "x", "recorded_by": "x"}
+        assert unauth_client.post("/divergence-readings", json=payload).status_code == 401
+
+
+class TestMutationsRequireAdminRole:
+    """When a User-role token is presented, mutations must 403. The Security
+    dependency passes (the user IS authenticated), but required_roles(['Admin'])
+    must reject."""
+
+    @pytest.fixture
+    def user_client(self):
+        app = FastAPI()
+        app.include_router(future_gadget_api_router)
+        user_token = SimpleNamespace(roles=["User"])
+        app.dependency_overrides[azure_scheme] = lambda: user_token
+        return TestClient(app)
+
+    @pytest.fixture
+    def admin_client(self):
+        app = FastAPI()
+        app.include_router(future_gadget_api_router)
+        admin_token = SimpleNamespace(roles=["Admin"])
+        app.dependency_overrides[azure_scheme] = lambda: admin_token
+        return TestClient(app)
+
+    def _experiment_payload(self):
+        return {
+            "name": "Test",
+            "description": "x",
+            "status": "planned",
+            "creator_id": "x",
+        }
+
+    def test_user_cannot_create_experiment(self, user_client):
+        r = user_client.post("/experiments", json=self._experiment_payload())
+        assert r.status_code == 403, r.text
+
+    def test_user_cannot_update_experiment(self, user_client):
+        r = user_client.put("/experiments/EXP-1", json={"name": "y"})
+        assert r.status_code == 403, r.text
+
+    def test_user_cannot_delete_experiment(self, user_client):
+        r = user_client.delete("/experiments/EXP-1")
+        assert r.status_code == 403, r.text
+
+    def test_user_cannot_create_divergence_reading(self, user_client):
+        r = user_client.post(
+            "/divergence-readings",
+            json={"reading": 1.0, "status": "x", "recorded_by": "x"},
+        )
+        assert r.status_code == 403, r.text
+
+    def test_user_can_read_experiments(self, user_client):
+        """Reads are open to any authenticated user, regardless of role."""
+        r = user_client.get("/experiments")
+        # 200 (empty list from the mock DB) — not 401/403
+        assert r.status_code == 200, r.text
+
+    def test_admin_can_create_experiment(self, admin_client):
+        r = admin_client.post("/experiments", json=self._experiment_payload())
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["name"] == "Test"
+
+    def test_admin_can_delete_experiment(self, admin_client):
+        r = admin_client.delete("/experiments/EXP-1")
+        # 200 (deleted) or 404 (not found) — but NOT 401/403
+        assert r.status_code in (200, 404), r.text
+
+
+class TestWebSocketAuthWiring:
+    """Pin the WS handlers to auth_connect, not the unauthenticated connect.
+    Without this, the role config on the connection manager is dead code and
+    anyone can join the broadcast."""
+
+    @pytest.mark.asyncio
+    async def test_experiments_websocket_calls_auth_connect(self, monkeypatch):
+        """experiments_websocket must call auth_connect (manager has
+        receiver_roles=['Admin'], so a non-admin connect gets 1008'd)."""
+        from api.future_gadget_api import experiments_websocket
+        from fastapi import WebSocketDisconnect
+
+        mock_ws = MagicMock()
+        mock_ws.receive_json = AsyncMock(side_effect=WebSocketDisconnect())
+
+        mock_manager = MagicMock()
+
+        async def fake_auth_connect(ws):
+            return None
+
+        async def fake_connect(ws):  # the OLD, insecure entry point
+            raise AssertionError(
+                "connect() must NOT be called — that was the bug"
+            )
+
+        mock_manager.auth_connect = fake_auth_connect
+        mock_manager.connect = fake_connect
+        mock_manager.disconnect = MagicMock()
+
+        monkeypatch.setattr(
+            "api.future_gadget_api.experiment_connection_manager", mock_manager
+        )
+        monkeypatch.setattr("api.future_gadget_api.logger", MagicMock())
+
+        await experiments_websocket(mock_ws)
+
+        mock_manager.disconnect.assert_called_once_with(mock_ws)
+
+    @pytest.mark.asyncio
+    async def test_worldline_websocket_calls_auth_connect(self, monkeypatch):
+        """Same for the worldline socket — even though its receiver_roles is
+        None, the auth frame must still be consumed before the loop starts."""
+        from api.future_gadget_api import worldline_websocket
+        from fastapi import WebSocketDisconnect
+
+        mock_ws = MagicMock()
+        mock_ws.receive_json = AsyncMock(side_effect=WebSocketDisconnect())
+
+        mock_manager = MagicMock()
+
+        async def fake_auth_connect(ws):
+            return None
+
+        async def fake_connect(ws):  # the OLD, insecure entry point
+            raise AssertionError(
+                "connect() must NOT be called — that was the bug"
+            )
+
+        mock_manager.auth_connect = fake_auth_connect
+        mock_manager.connect = fake_connect
+        mock_manager.disconnect = MagicMock()
+
+        monkeypatch.setattr(
+            "api.future_gadget_api.worldline_connection_manager", mock_manager
+        )
+        monkeypatch.setattr("api.future_gadget_api.logger", MagicMock())
+
+        await worldline_websocket(mock_ws)
+
+        mock_manager.disconnect.assert_called_once_with(mock_ws)
+
+    @pytest.mark.asyncio
+    async def test_experiments_websocket_rejects_connection_without_token(self):
+        """End-to-end through the real ConnectionManager.auth_connect:
+        the experiments manager has receiver_roles=['Admin'], so a connection
+        that arrives without a token frame is closed with code 1008 and never
+        added to active_connections.
+
+        This is the third acceptance criterion from the issue."""
+        from common.socket import ConnectionManager
+
+        manager = ConnectionManager(
+            receiver_roles=["Admin"], sender_roles=["Admin"]
+        )
+
+        mock_ws = MagicMock()
+        closed = {}
+
+        async def fake_accept():
+            return None
+
+        async def fake_receive_json():
+            # No token frame — matches the unauthenticated curl scenario.
+            return {}
+
+        async def fake_close(code, reason):
+            closed["code"] = code
+            closed["reason"] = reason
+
+        mock_ws.accept = fake_accept
+        mock_ws.receive_json = fake_receive_json
+        mock_ws.close = fake_close
+
+        await manager.auth_connect(mock_ws)
+
+        assert closed.get("code") == 1008
+        assert "Missing authentication token" in closed.get("reason", "")
+        assert mock_ws not in manager.active_connections
+
+    @pytest.mark.asyncio
+    async def test_experiments_websocket_does_not_raise_on_rejected_connect(self, monkeypatch):
+        """Regression: when auth_connect rejects a connection (closes the
+        socket with 1008 and never appends to active_connections), the
+        next `await websocket.receive_json()` in the handler's while loop
+        raises `RuntimeError("WebSocket is not connected. Need to call
+        'accept' first.")` — that is NOT a `WebSocketDisconnect`, so it
+        slips past the inner `except WebSocketDisconnect:` block.
+
+        Before the fix, this RuntimeError propagated up and (with the
+        suggested `finally:` cleanup) a subsequent `disconnect(websocket)`
+        on a connection that was never added raised
+        `ValueError: list.remove(x): x not in list` — flooding the server
+        log with tracebacks on every probe / failed connect.
+
+        The fix mirrors `backend/api/api.py:43-66` (`/chat`): wrap the
+        body in an outer `try / except Exception` that only calls
+        `disconnect` when the websocket is actually in `active_connections`.
+
+        This test runs `experiments_websocket` against the REAL
+        `ConnectionManager` with a no-token auth frame and asserts the
+        handler does not raise — and that the close frame still carries
+        code 1008 (AC #3)."""
+        from api.future_gadget_api import experiments_websocket
+        from common.socket import ConnectionManager
+
+        manager = ConnectionManager(
+            receiver_roles=["Admin"], sender_roles=["Admin"]
+        )
+
+        mock_ws = MagicMock()
+        closed = {}
+
+        async def fake_accept():
+            return None
+
+        # First call returns {} (auth frame); every subsequent call raises
+        # RuntimeError (mimics the disconnected-socket state in Starlette
+        # after `await websocket.close(code=1008, ...)`).
+        mock_ws.receive_json = AsyncMock(
+            side_effect=[
+                {},
+                RuntimeError(
+                    "WebSocket is not connected. Need to call 'accept' first."
+                ),
+            ]
+        )
+
+        async def fake_close(code, reason=""):
+            closed["code"] = code
+            closed["reason"] = reason
+
+        mock_ws.accept = fake_accept
+        mock_ws.close = fake_close
+
+        monkeypatch.setattr(
+            "api.future_gadget_api.experiment_connection_manager", manager
+        )
+        mock_logger = MagicMock()
+        monkeypatch.setattr("api.future_gadget_api.logger", mock_logger)
+
+        # Must NOT raise. With the buggy version this raised RuntimeError;
+        # with the suggested `finally`-based fix, the second call would
+        # also raise ValueError from disconnect().
+        await experiments_websocket(mock_ws)
+
+        # auth_connect still closes with 1008 (AC #3).
+        assert closed.get("code") == 1008
+        assert "Missing authentication token" in closed.get("reason", "")
+        # The rejected connection was never added to active_connections.
+        assert mock_ws not in manager.active_connections
+        # The outer guard caught the RuntimeError and logged it.
+        assert mock_logger.error.called, "RuntimeError must be logged"
+
+    @pytest.mark.asyncio
+    async def test_worldline_websocket_does_not_raise_on_rejected_connect(self, monkeypatch):
+        """Same regression as the experiments handler: the worldline
+        manager has `receiver_roles=None`, but a no-token auth frame is
+        still rejected by auth_connect (because `if not auth_data.get("token")`
+        fires before the role check). The handler must not raise."""
+        from api.future_gadget_api import worldline_websocket
+        from common.socket import ConnectionManager
+
+        manager = ConnectionManager(
+            receiver_roles=None, sender_roles=["Admin"]
+        )
+
+        mock_ws = MagicMock()
+        closed = {}
+
+        async def fake_accept():
+            return None
+
+        mock_ws.receive_json = AsyncMock(
+            side_effect=[
+                {},
+                RuntimeError(
+                    "WebSocket is not connected. Need to call 'accept' first."
+                ),
+            ]
+        )
+
+        async def fake_close(code, reason=""):
+            closed["code"] = code
+            closed["reason"] = reason
+
+        mock_ws.accept = fake_accept
+        mock_ws.close = fake_close
+
+        monkeypatch.setattr(
+            "api.future_gadget_api.worldline_connection_manager", manager
+        )
+        mock_logger = MagicMock()
+        monkeypatch.setattr("api.future_gadget_api.logger", mock_logger)
+
+        await worldline_websocket(mock_ws)
+
+        assert closed.get("code") == 1008
+        assert "Missing authentication token" in closed.get("reason", "")
+        assert mock_ws not in manager.active_connections
+        assert mock_logger.error.called, "RuntimeError must be logged"

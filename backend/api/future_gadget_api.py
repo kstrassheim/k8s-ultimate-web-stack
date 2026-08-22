@@ -41,13 +41,17 @@ else:
     )
 
 # WebSocket connection managers
+#
+# Auth model is enforced by auth_connect(): receiver_roles is checked against the
+# token's roles during the auth frame. mutations on these resources happen via
+# REST and require @required_roles(["Admin"]) there.
 experiment_connection_manager = ConnectionManager(
     receiver_roles=["Admin"],
     sender_roles=["Admin"]
 )
 
 worldline_connection_manager = ConnectionManager(
-    receiver_roles=None,
+    receiver_roles=None,   # any authenticated user may subscribe
     sender_roles=["Admin"]
 )
 
@@ -103,15 +107,24 @@ class DivergenceReadingCreate(DivergenceReadingBase):
     pass
 
 # --- REST Endpoints ---
+#
+# Auth model (fix for issue #113):
+#   - Reads (GET) require any authenticated user — `Security(azure_scheme,
+#     scopes=scopes)` is sufficient.
+#   - Mutations (POST/PUT/DELETE) additionally require the `Admin` role via
+#     `@required_roles(["Admin"])`. The decorator reads the `token` kwarg
+#     populated by the Security dependency.
+# Without these, anyone with the URL had full read/write access. The frontend's
+# `ProtectedRoute` is client-side and not a security boundary.
 
 @future_gadget_api_router.get("/lab-experiments", response_model=List[Dict])
 @future_gadget_api_router.get("/experiments", response_model=List[Dict])
-async def get_experiments():
+async def get_experiments(token=Security(azure_scheme, scopes=scopes)):
     return fgl_service.get_all_experiments()
 
 @future_gadget_api_router.get("/lab-experiments/{experiment_id}", response_model=Dict)
 @future_gadget_api_router.get("/experiments/{experiment_id}", response_model=Dict)
-async def get_experiment(experiment_id: str):
+async def get_experiment(experiment_id: str, token=Security(azure_scheme, scopes=scopes)):
     exp = fgl_service.get_experiment_by_id(experiment_id)
     if not exp:
         raise HTTPException(status_code=404, detail="Experiment not found")
@@ -119,12 +132,14 @@ async def get_experiment(experiment_id: str):
 
 @future_gadget_api_router.post("/lab-experiments", response_model=Dict)
 @future_gadget_api_router.post("/experiments", response_model=Dict)
-async def create_experiment(exp: ExperimentCreate):
+@required_roles(["Admin"])
+async def create_experiment(exp: ExperimentCreate, token=Security(azure_scheme, scopes=scopes)):
     return fgl_service.create_experiment(exp.model_dump())
 
 @future_gadget_api_router.put("/lab-experiments/{experiment_id}", response_model=Dict)
 @future_gadget_api_router.put("/experiments/{experiment_id}", response_model=Dict)
-async def update_experiment(experiment_id: str, exp: ExperimentUpdate):
+@required_roles(["Admin"])
+async def update_experiment(experiment_id: str, exp: ExperimentUpdate, token=Security(azure_scheme, scopes=scopes)):
     updated = fgl_service.update_experiment(experiment_id, exp.model_dump(exclude_unset=True))
     if not updated:
         raise HTTPException(status_code=404, detail="Experiment not found")
@@ -132,36 +147,38 @@ async def update_experiment(experiment_id: str, exp: ExperimentUpdate):
 
 @future_gadget_api_router.delete("/lab-experiments/{experiment_id}")
 @future_gadget_api_router.delete("/experiments/{experiment_id}")
-async def delete_experiment(experiment_id: str):
+@required_roles(["Admin"])
+async def delete_experiment(experiment_id: str, token=Security(azure_scheme, scopes=scopes)):
     if not fgl_service.delete_experiment(experiment_id):
         raise HTTPException(status_code=404, detail="Experiment not found")
     return {"status": "deleted"}
 
 @future_gadget_api_router.get("/divergence-readings", response_model=List[Dict])
-async def get_divergence_readings():
+async def get_divergence_readings(token=Security(azure_scheme, scopes=scopes)):
     return fgl_service.get_all_divergence_readings()
 
 @future_gadget_api_router.get("/divergence-readings/latest", response_model=Dict)
-async def get_latest_divergence_reading():
+async def get_latest_divergence_reading(token=Security(azure_scheme, scopes=scopes)):
     reading = fgl_service.get_latest_divergence_reading()
     if not reading:
         raise HTTPException(status_code=404, detail="No divergence readings found")
     return reading
 
 @future_gadget_api_router.post("/divergence-readings", response_model=Dict)
-async def create_divergence_reading(reading: DivergenceReadingCreate):
+@required_roles(["Admin"])
+async def create_divergence_reading(reading: DivergenceReadingCreate, token=Security(azure_scheme, scopes=scopes)):
     return fgl_service.create_divergence_reading(reading.model_dump())
 
 @future_gadget_api_router.get("/worldline/status", response_model=Dict)
 @future_gadget_api_router.get("/worldline-status", response_model=Dict)
-async def get_worldline_status():
+async def get_worldline_status(token=Security(azure_scheme, scopes=scopes)):
     experiments = fgl_service.get_all_experiments()
     readings = fgl_service.get_all_divergence_readings()
     return calculate_worldline_status(experiments, readings)
 
 @future_gadget_api_router.get("/worldline/history", response_model=List[Dict])
 @future_gadget_api_router.get("/worldline-history", response_model=List[Dict])
-async def get_worldline_history():
+async def get_worldline_history(token=Security(azure_scheme, scopes=scopes)):
     """Return a history of worldline readings based on experiments and readings."""
     experiments = fgl_service.get_all_experiments()
     readings = fgl_service.get_all_divergence_readings()
@@ -202,23 +219,49 @@ async def get_worldline_history():
     return history
 
 # --- WebSocket Endpoints ---
+#
+# `connect()` was previously called here, which accepts the socket without
+# verifying the auth frame — anyone could connect and broadcast/listen. Using
+# `auth_connect()` makes the manager's `receiver_roles` actually enforced
+# (Admin for experiments, any authenticated for worldline).
+#
+# The outer `try / except Exception` mirrors the defensive pattern in
+# `backend/api/api.py:43-66` (`/chat`). It is required because `auth_connect`
+# closes the socket with code 1008 and returns *without* appending to
+# `active_connections` when the auth frame is missing or invalid; the next
+# `websocket.receive_json()` then raises `RuntimeError("WebSocket is not
+# connected")` (not `WebSocketDisconnect`), which slips past the inner
+# `except WebSocketDisconnect:`. Without the outer guard, every probe /
+# failed connect floods the server log with a traceback and a subsequent
+# `disconnect(websocket)` on a connection never added raises
+# `ValueError: list.remove(x): x not in list`.
 
 @future_gadget_api_router.websocket("/ws/lab-experiments")
 async def experiments_websocket(websocket: WebSocket):
-    await experiment_connection_manager.connect(websocket)
     try:
-        while True:
-            data = await websocket.receive_json()
-            await websocket.send_json({"status": "received", "data": data})
-    except WebSocketDisconnect:
-        experiment_connection_manager.disconnect(websocket)
+        await experiment_connection_manager.auth_connect(websocket)
+        try:
+            while True:
+                data = await websocket.receive_json()
+                await websocket.send_json({"status": "received", "data": data})
+        except WebSocketDisconnect:
+            experiment_connection_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
+        if websocket in experiment_connection_manager.active_connections:
+            experiment_connection_manager.disconnect(websocket)
 
 @future_gadget_api_router.websocket("/ws/worldline-status")
 async def worldline_websocket(websocket: WebSocket):
-    await worldline_connection_manager.connect(websocket)
     try:
-        while True:
-            data = await websocket.receive_json()
-            await websocket.send_json({"status": "received", "data": data})
-    except WebSocketDisconnect:
-        worldline_connection_manager.disconnect(websocket)
+        await worldline_connection_manager.auth_connect(websocket)
+        try:
+            while True:
+                data = await websocket.receive_json()
+                await websocket.send_json({"status": "received", "data": data})
+        except WebSocketDisconnect:
+            worldline_connection_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
+        if websocket in worldline_connection_manager.active_connections:
+            worldline_connection_manager.disconnect(websocket)
