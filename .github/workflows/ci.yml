@@ -252,6 +252,110 @@ jobs:
           fi
           echo "OK: inline ConfigMap body matches scripts/mongo-entrypoint.sh"
 
+  kustomize-validate:
+    # Build every kustomize overlay under k8s/environments/ and validate the
+    # rendered resources against real Kubernetes OpenAPI schemas.
+    #
+    # Closes issue #111's acceptance criteria:
+    #   1. `kustomize build` runs on all three overlays and fails on any
+    #      kustomize-level error (bad YAML, missing patch target, deleted
+    #      resource that an overlay still references, …).
+    #   2. The rendered output is fed to `kubeconform` for schema validation
+    #      against a specific Kubernetes minor version, so ArgoCD cannot
+    #      reject the same manifest for "unknown field" / "missing required
+    #      field" reasons that CI did not catch.
+    #   3. Runs on PRs alongside the rest of the CI matrix (no `if:` gate).
+    #
+    # Pinned to Kubernetes 1.30 by default — the lowest minor that still
+    # ships every API used by these manifests (networking.k8s.io/v1 Ingress,
+    # networking.k8s.io/v1 NetworkPolicy, apps/v1 Deployment/StatefulSet,
+    # batch/v1 CronJob, rbac.authorization.k8s.io/v1, core/v1). Bump
+    # KUBERNETES_VERSION below when the mainpi k3s cluster upgrades; the
+    # rest of the job does not need to change. Validation runs in `-strict`
+    # mode so unknown fields fail the build rather than being silently
+    # ignored, and `-ignore-missing-schemas` is NOT set — the manifests in
+    # this repo all map to standard K8s resources (no CRDs), so any "schema
+    # not found" error is itself a signal that something genuinely off-spec
+    # snuck in.
+    name: Kustomize + Schema Validation
+    runs-on: ubuntu-latest
+    env:
+      KUSTOMIZE_VERSION: v5.7.0
+      KUBECONFORM_VERSION: v0.6.7
+      # MUST match the mainpi k3s cluster's Kubernetes minor version. See
+      # the job header for why and when to bump.
+      KUBERNETES_VERSION: "1.30.0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kustomize
+        # Standalone binary, not `kubectl kustomize` — the standalone kustomize
+        # version is independent of whatever kubectl version GitHub Actions
+        # happens to ship on the runner image, and we want the kustomize CLI
+        # behaviour to be reproducible across runs.
+        run: |
+          set -euo pipefail
+          curl -sSLo /tmp/kustomize.tar.gz \
+            "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${KUSTOMIZE_VERSION}/kustomize_${KUSTOMIZE_VERSION}_linux_amd64.tar.gz"
+          sudo tar -C /usr/local/bin -xzf /tmp/kustomize.tar.gz kustomize
+          rm -f /tmp/kustomize.tar.gz
+          kustomize version
+
+      - name: Install kubeconform
+        # Bundled OpenAPI schemas are used (-schema-location default); no
+        # CRDs in this repo, so no need to wire up datreeio/CRDs-catalog.
+        run: |
+          set -euo pipefail
+          curl -sSLo /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          sudo tar -C /usr/local/bin -xzf /tmp/kubeconform.tar.gz kubeconform
+          rm -f /tmp/kubeconform.tar.gz
+          kubeconform -v
+
+      - name: Build and validate all overlays
+        run: |
+          set -euo pipefail
+          failures=0
+          for env in dev test prod; do
+            echo "::group::kustomize build k8s/environments/${env}"
+            # kustomize build exits non-zero on: invalid YAML, missing
+            # resource files, patch path that doesn't resolve, target kind/name
+            # that no longer matches any resource, etc. Exactly the failure
+            # modes the issue is asking CI to catch.
+            kustomize build "k8s/environments/${env}" > "/tmp/${env}.yaml"
+            resource_count="$(grep -c '^kind:' "/tmp/${env}.yaml")"
+            echo "Built ${resource_count} resources for ${env}"
+            echo "::endgroup::"
+
+            echo "::group::kubeconform /tmp/${env}.yaml (Kubernetes ${KUBERNETES_VERSION})"
+            # `-strict` rejects unknown fields; `-summary` ends with a one-line
+            # pass/fail tally. `set +e` is intentional — we want to keep
+            # running through all three overlays so a single failure shows up
+            # alongside the others, then aggregate at the end.
+            set +e
+            kubeconform \
+              -strict \
+              -summary \
+              -verbose \
+              -kubernetes-version "${KUBERNETES_VERSION}" \
+              -schema-location default \
+              "/tmp/${env}.yaml"
+            rc=$?
+            set -e
+            if [ "${rc}" -ne 0 ]; then
+              echo "::error::kubeconform rejected /tmp/${env}.yaml (env=${env}, exit=${rc})"
+              failures=$((failures + 1))
+            fi
+            echo "::endgroup::"
+          done
+
+          if [ "${failures}" -gt 0 ]; then
+            echo "::error::${failures} overlay(s) failed kustomize + schema validation"
+            exit 1
+          fi
+          echo "OK: kustomize build + kubeconform schema check passed for all 3 overlays (dev / test / prod)"
+
   terraform-validate:
     name: Terraform Validate
     runs-on: ubuntu-latest
