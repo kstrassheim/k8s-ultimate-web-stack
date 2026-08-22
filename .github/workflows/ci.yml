@@ -472,15 +472,29 @@ jobs:
           done
           echo "FRONTEND_PID=$FRONTEND_PID" >> $GITHUB_ENV
 
+      # OFF BY DEFAULT — label a pull request `flake-guard` to run it.
+      #
+      # This loop was acceptance criterion #2 for issue #95 ("the test passes
+      # twenty consecutive runs"). It proved the chained-assertion fix in
+      # PR #102 and then kept charging twenty extra Cypress runs to every
+      # build for the rest of time, long after the thing it was verifying had
+      # been established.
+      #
+      # Kept rather than deleted, because the loop is the right tool the next
+      # time a spec is suspected of flaking — twenty fresh runs is still how
+      # you tell an intermittent failure from a fixed one. Add the label to a
+      # PR and it runs there; nothing else pays for it.
+      #
+      # experiments.cy.js is NOT losing coverage: the full suite below runs it
+      # once, every time, like every other spec.
       - name: "Flake guard: run experiments.cy.js 20 times (issue #95)"
+        if: contains(github.event.pull_request.labels.*.name, 'flake-guard')
         env:
           npm_config_mock: 'true'
         run: |
           cd frontend
-          # Acceptance criterion #2 for issue #95: "The test passes twenty
-          # consecutive runs." Loop experiments.cy.js twenty times against
-          # the running mock backend + frontend; failure of any single run
-          # fails this job.
+          # Loop experiments.cy.js twenty times against the running mock
+          # backend + frontend; failure of any single run fails this job.
           #
           # This is NOT Cypress retries — cypress.config.js has no `retries`
           # field, so each invocation is a fresh run, and no test is
@@ -501,9 +515,9 @@ jobs:
           npm_config_mock: 'true'
         run: |
           cd frontend
-          # Clear any coverage data the flake-guard loop above may have
-          # left behind so the report below reflects only this single
-          # full-suite run.
+          # Clear any coverage data the flake-guard loop above may have left
+          # behind so the report reflects only this single full-suite run.
+          # Harmless when that loop is skipped, which is the normal case.
           rm -rf .nyc_output/*
           # Run Cypress directly - backend is already running in the background
           # Do NOT use test:e2e:coverage (it spawns its own backend causing EADDRINUSE)
