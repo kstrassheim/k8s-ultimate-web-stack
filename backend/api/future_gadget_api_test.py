@@ -1238,3 +1238,125 @@ class TestWebSocketAuthWiring:
         assert closed.get("code") == 1008
         assert "Missing authentication token" in closed.get("reason", "")
         assert mock_ws not in manager.active_connections
+
+    @pytest.mark.asyncio
+    async def test_experiments_websocket_does_not_raise_on_rejected_connect(self, monkeypatch):
+        """Regression: when auth_connect rejects a connection (closes the
+        socket with 1008 and never appends to active_connections), the
+        next `await websocket.receive_json()` in the handler's while loop
+        raises `RuntimeError("WebSocket is not connected. Need to call
+        'accept' first.")` — that is NOT a `WebSocketDisconnect`, so it
+        slips past the inner `except WebSocketDisconnect:` block.
+
+        Before the fix, this RuntimeError propagated up and (with the
+        suggested `finally:` cleanup) a subsequent `disconnect(websocket)`
+        on a connection that was never added raised
+        `ValueError: list.remove(x): x not in list` — flooding the server
+        log with tracebacks on every probe / failed connect.
+
+        The fix mirrors `backend/api/api.py:43-66` (`/chat`): wrap the
+        body in an outer `try / except Exception` that only calls
+        `disconnect` when the websocket is actually in `active_connections`.
+
+        This test runs `experiments_websocket` against the REAL
+        `ConnectionManager` with a no-token auth frame and asserts the
+        handler does not raise — and that the close frame still carries
+        code 1008 (AC #3)."""
+        from api.future_gadget_api import experiments_websocket
+        from common.socket import ConnectionManager
+
+        manager = ConnectionManager(
+            receiver_roles=["Admin"], sender_roles=["Admin"]
+        )
+
+        mock_ws = MagicMock()
+        closed = {}
+
+        async def fake_accept():
+            return None
+
+        # First call returns {} (auth frame); every subsequent call raises
+        # RuntimeError (mimics the disconnected-socket state in Starlette
+        # after `await websocket.close(code=1008, ...)`).
+        mock_ws.receive_json = AsyncMock(
+            side_effect=[
+                {},
+                RuntimeError(
+                    "WebSocket is not connected. Need to call 'accept' first."
+                ),
+            ]
+        )
+
+        async def fake_close(code, reason=""):
+            closed["code"] = code
+            closed["reason"] = reason
+
+        mock_ws.accept = fake_accept
+        mock_ws.close = fake_close
+
+        monkeypatch.setattr(
+            "api.future_gadget_api.experiment_connection_manager", manager
+        )
+        mock_logger = MagicMock()
+        monkeypatch.setattr("api.future_gadget_api.logger", mock_logger)
+
+        # Must NOT raise. With the buggy version this raised RuntimeError;
+        # with the suggested `finally`-based fix, the second call would
+        # also raise ValueError from disconnect().
+        await experiments_websocket(mock_ws)
+
+        # auth_connect still closes with 1008 (AC #3).
+        assert closed.get("code") == 1008
+        assert "Missing authentication token" in closed.get("reason", "")
+        # The rejected connection was never added to active_connections.
+        assert mock_ws not in manager.active_connections
+        # The outer guard caught the RuntimeError and logged it.
+        assert mock_logger.error.called, "RuntimeError must be logged"
+
+    @pytest.mark.asyncio
+    async def test_worldline_websocket_does_not_raise_on_rejected_connect(self, monkeypatch):
+        """Same regression as the experiments handler: the worldline
+        manager has `receiver_roles=None`, but a no-token auth frame is
+        still rejected by auth_connect (because `if not auth_data.get("token")`
+        fires before the role check). The handler must not raise."""
+        from api.future_gadget_api import worldline_websocket
+        from common.socket import ConnectionManager
+
+        manager = ConnectionManager(
+            receiver_roles=None, sender_roles=["Admin"]
+        )
+
+        mock_ws = MagicMock()
+        closed = {}
+
+        async def fake_accept():
+            return None
+
+        mock_ws.receive_json = AsyncMock(
+            side_effect=[
+                {},
+                RuntimeError(
+                    "WebSocket is not connected. Need to call 'accept' first."
+                ),
+            ]
+        )
+
+        async def fake_close(code, reason=""):
+            closed["code"] = code
+            closed["reason"] = reason
+
+        mock_ws.accept = fake_accept
+        mock_ws.close = fake_close
+
+        monkeypatch.setattr(
+            "api.future_gadget_api.worldline_connection_manager", manager
+        )
+        mock_logger = MagicMock()
+        monkeypatch.setattr("api.future_gadget_api.logger", mock_logger)
+
+        await worldline_websocket(mock_ws)
+
+        assert closed.get("code") == 1008
+        assert "Missing authentication token" in closed.get("reason", "")
+        assert mock_ws not in manager.active_connections
+        assert mock_logger.error.called, "RuntimeError must be logged"

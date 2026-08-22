@@ -224,23 +224,44 @@ async def get_worldline_history(token=Security(azure_scheme, scopes=scopes)):
 # verifying the auth frame — anyone could connect and broadcast/listen. Using
 # `auth_connect()` makes the manager's `receiver_roles` actually enforced
 # (Admin for experiments, any authenticated for worldline).
+#
+# The outer `try / except Exception` mirrors the defensive pattern in
+# `backend/api/api.py:43-66` (`/chat`). It is required because `auth_connect`
+# closes the socket with code 1008 and returns *without* appending to
+# `active_connections` when the auth frame is missing or invalid; the next
+# `websocket.receive_json()` then raises `RuntimeError("WebSocket is not
+# connected")` (not `WebSocketDisconnect`), which slips past the inner
+# `except WebSocketDisconnect:`. Without the outer guard, every probe /
+# failed connect floods the server log with a traceback and a subsequent
+# `disconnect(websocket)` on a connection never added raises
+# `ValueError: list.remove(x): x not in list`.
 
 @future_gadget_api_router.websocket("/ws/lab-experiments")
 async def experiments_websocket(websocket: WebSocket):
-    await experiment_connection_manager.auth_connect(websocket)
     try:
-        while True:
-            data = await websocket.receive_json()
-            await websocket.send_json({"status": "received", "data": data})
-    except WebSocketDisconnect:
-        experiment_connection_manager.disconnect(websocket)
+        await experiment_connection_manager.auth_connect(websocket)
+        try:
+            while True:
+                data = await websocket.receive_json()
+                await websocket.send_json({"status": "received", "data": data})
+        except WebSocketDisconnect:
+            experiment_connection_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
+        if websocket in experiment_connection_manager.active_connections:
+            experiment_connection_manager.disconnect(websocket)
 
 @future_gadget_api_router.websocket("/ws/worldline-status")
 async def worldline_websocket(websocket: WebSocket):
-    await worldline_connection_manager.auth_connect(websocket)
     try:
-        while True:
-            data = await websocket.receive_json()
-            await websocket.send_json({"status": "received", "data": data})
-    except WebSocketDisconnect:
-        worldline_connection_manager.disconnect(websocket)
+        await worldline_connection_manager.auth_connect(websocket)
+        try:
+            while True:
+                data = await websocket.receive_json()
+                await websocket.send_json({"status": "received", "data": data})
+        except WebSocketDisconnect:
+            worldline_connection_manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"WebSocket error: {str(e)}")
+        if websocket in worldline_connection_manager.active_connections:
+            worldline_connection_manager.disconnect(websocket)
