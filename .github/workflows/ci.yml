@@ -21,7 +21,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
@@ -43,7 +43,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install build tools + python3
         run: |
@@ -64,7 +64,7 @@ jobs:
 
       - name: Upload test coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: pytest-coverage
           path: backend/htmlcov
@@ -72,11 +72,11 @@ jobs:
 
   frontend-unit-tests:
     runs-on: ubuntu-latest
-    container: node:22-alpine
+    container: node:24-alpine
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install build dependencies
         run: apk add --no-cache python3 make g++ git bash
@@ -97,7 +97,7 @@ jobs:
 
       - name: Upload test coverage
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: jest-coverage
           path: frontend/coverage/lcov-report
@@ -117,7 +117,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Bash syntax check on the script
         # `bash -n` parses without executing — catches unbalanced quotes /
@@ -171,7 +171,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Bash syntax check on the script
         # `bash -n` parses without executing — catches unbalanced quotes /
@@ -225,7 +225,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Bash syntax check on the script
         run: bash -n scripts/mongo-entrypoint.sh
@@ -287,7 +287,7 @@ jobs:
       KUBERNETES_VERSION: "1.30.0"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Install kustomize
         # Standalone binary, not `kubectl kustomize` — the standalone kustomize
@@ -362,10 +362,10 @@ jobs:
     if: github.event_name == 'pull_request'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.9.0
 
@@ -389,15 +389,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: '22'
+          node-version: '24'
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
           cache: 'pip'
@@ -472,15 +472,29 @@ jobs:
           done
           echo "FRONTEND_PID=$FRONTEND_PID" >> $GITHUB_ENV
 
+      # OFF BY DEFAULT — label a pull request `flake-guard` to run it.
+      #
+      # This loop was acceptance criterion #2 for issue #95 ("the test passes
+      # twenty consecutive runs"). It proved the chained-assertion fix in
+      # PR #102 and then kept charging twenty extra Cypress runs to every
+      # build for the rest of time, long after the thing it was verifying had
+      # been established.
+      #
+      # Kept rather than deleted, because the loop is the right tool the next
+      # time a spec is suspected of flaking — twenty fresh runs is still how
+      # you tell an intermittent failure from a fixed one. Add the label to a
+      # PR and it runs there; nothing else pays for it.
+      #
+      # experiments.cy.js is NOT losing coverage: the full suite below runs it
+      # once, every time, like every other spec.
       - name: "Flake guard: run experiments.cy.js 20 times (issue #95)"
+        if: contains(github.event.pull_request.labels.*.name, 'flake-guard')
         env:
           npm_config_mock: 'true'
         run: |
           cd frontend
-          # Acceptance criterion #2 for issue #95: "The test passes twenty
-          # consecutive runs." Loop experiments.cy.js twenty times against
-          # the running mock backend + frontend; failure of any single run
-          # fails this job.
+          # Loop experiments.cy.js twenty times against the running mock
+          # backend + frontend; failure of any single run fails this job.
           #
           # This is NOT Cypress retries — cypress.config.js has no `retries`
           # field, so each invocation is a fresh run, and no test is
@@ -501,9 +515,9 @@ jobs:
           npm_config_mock: 'true'
         run: |
           cd frontend
-          # Clear any coverage data the flake-guard loop above may have
-          # left behind so the report below reflects only this single
-          # full-suite run.
+          # Clear any coverage data the flake-guard loop above may have left
+          # behind so the report reflects only this single full-suite run.
+          # Harmless when that loop is skipped, which is the normal case.
           rm -rf .nyc_output/*
           # Run Cypress directly - backend is already running in the background
           # Do NOT use test:e2e:coverage (it spawns its own backend causing EADDRINUSE)
@@ -530,7 +544,7 @@ jobs:
 
       - name: Upload Cypress screenshots
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cypress-screenshots
           path: frontend/cypress/screenshots
@@ -538,7 +552,7 @@ jobs:
 
       - name: Upload test videos
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: cypress-videos
           path: frontend/cypress/videos
@@ -546,7 +560,7 @@ jobs:
 
       - name: Upload E2E coverage reports
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: e2e-coverage-report
           path: frontend/coverage/lcov-report
