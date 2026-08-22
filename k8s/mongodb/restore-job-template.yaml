@@ -1,0 +1,141 @@
+# ==============================
+# MongoDB restore Job TEMPLATE — NOT applied via kustomize.
+#
+# Operators copy this block into a per-incident file, set ARCHIVE /
+# TARGET_DB / SOURCE_DB / FORCE for the incident, and `kubectl apply -f`
+# it. See the README "Restoring from a backup" runbook for the
+# end-to-end procedure (pick archive → spawn inspection pod → fill in
+# this template → apply → verify via mongosh).
+#
+# This file is intentionally NOT referenced by k8s/mongodb/kustomization.yaml.
+# The ConfigMap it relies on (mongo-restore-script, carrying the inline
+# copy of scripts/mongo-restore.sh) IS in kustomize, applied via
+# k8s/mongodb/restore-job.yaml.
+#
+# Why a per-incident template instead of a CronJob? Restores are
+# triggered by humans responding to an incident (bad deploy, accidental
+# drop, "we need yesterday's data"). There is no cadence. Wrapping this
+# in a CronJob would mean either (a) it runs every night and almost
+# always does nothing useful, or (b) it runs once and then has to be
+# disabled. Either way it's the wrong shape. A one-shot Job that the
+# operator deletes after the restore succeeds is the right primitive —
+# the same pattern as kubectl create job for one-off ops.
+#
+# Defaults below match the production namespace (`ultimate-web-stack`);
+# for dev / test, change `metadata.namespace` to `ultimate-web-stack-dev`
+# or `ultimate-web-stack-test` and update MONGO_URI's Secret reference
+# to the matching `mongodb-credentials` Secret in that namespace.
+# ==============================
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongo-restore
+  labels:
+    app: mongodb
+    # Override `name` per incident if you intend to run multiple restore
+    # jobs back-to-back (Job names must be unique within a namespace).
+    # e.g. `mongo-restore-2026-08-22-bad-deploy-rollback`.
+  namespace: ultimate-web-stack
+spec:
+  # backoffLimit: 0 means a failure of the restore pod is final — the
+  # script's exit code is the operator's signal that something went
+  # wrong, and re-running with the same broken state won't help.
+  backoffLimit: 0
+  template:
+    metadata:
+      labels:
+        app: mongodb
+    spec:
+      restartPolicy: Never
+      # No activeDeadlineSeconds — a stuck mongorestore should be visible
+      # in logs, not silently killed mid-write (mirrors backup-cronjob.yaml).
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: restore
+          # mongo:8.0 matches the StatefulSet's image and bundles both
+          # mongorestore and mongosh (needed for the pre/post-flight
+          # collection-count checks).
+          image: mongo:8.0
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/mongo-restore.sh"]
+          env:
+            # Closes issue #104: MONGO_URI comes from the
+            # mongodb-credentials Secret (key `mongo-uri`). Same
+            # pattern as the web Deployment's MONGODB_URI / the
+            # backup CronJob's MONGO_URI — see k8s/mongodb/mongodb.yaml
+            # for the create command and the key list.
+            - name: MONGO_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-credentials
+                  key: mongo-uri
+            # ---- Operator-supplied per-incident overrides ----
+            # The placeholders below fail the script's own validation
+            # with a RESTORE FAILED log line if the operator forgets
+            # to fill them in — that's deliberate, the alternative
+            # is a Job that silently runs against a typo'd path.
+            - name: ARCHIVE
+              # e.g. /backup/future_gadget_lab-20260821T030000Z.tar.gz
+              value: /backup/REPLACE-WITH-ARCHIVE-NAME.tar.gz
+            - name: TARGET_DB
+              # e.g. scratch_restore_2026_08_22 (don't restore into a
+              # live DB unless you've stopped traffic / flipped the
+              # Service away from it AND set FORCE=1 below).
+              value: REPLACE-WITH-TARGET-DB-NAME
+            - name: SOURCE_DB
+              # The DB name INSIDE the archive. Matches MONGO_DB in
+              # the backup CronJob for this env:
+              #   prod: future_gadget_lab
+              #   dev:  future_gadget_lab_dev
+              #   test: future_gadget_lab_test
+              value: future_gadget_lab
+            # FORCE=0 by default — operator flips to "1" only when
+            # they have confirmed the target DB contents are
+            # expendable (see the runbook).
+            - name: FORCE
+              value: "0"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            # The backup PVC — archives live at /backup/. The
+            # restore script reads ${ARCHIVE} as an absolute path
+            # so the operator passes /backup/<archive-name>.tar.gz.
+            - name: backup-source
+              mountPath: /backup
+              readOnly: true
+            - name: restore-script
+              mountPath: /scripts
+              readOnly: true
+            # Writable in-memory /tmp — required because the script
+            # uses `mktemp -d -t mongo-restore.XXXXXX` (which defaults
+            # to /tmp) for the staged extract. Without this, the very
+            # first run on a pod with readOnlyRootFilesystem=true
+            # fails with EROFS before any of the restore logic runs
+            # (same pattern as backup-cronjob.yaml).
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: backup-source
+          persistentVolumeClaim:
+            claimName: mongo-backup-data
+        - name: restore-script
+          configMap:
+            name: mongo-restore-script
+            defaultMode: 0o555
+        - name: tmp
+          emptyDir:
+            medium: Memory
