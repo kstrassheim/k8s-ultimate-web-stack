@@ -52,7 +52,14 @@ spec:
         - name: fix-data-ownership
           # Same image as mongod — guarantees the `mongodb` user/group are
           # defined with the same UID/GID we're about to chown to.
-          image: mongo:8.0
+          #
+          # Pin: `mongo:8.0` is a moving tag; the digest below was resolved
+          # against the linux/arm64 entry of the official multi-arch index
+          # on 2026-08-22 so a pod restart cannot silently land on a
+          # different build than the mongod container beside it.
+          #   docker buildx imagetools inspect mongo:8.0
+          #   crane digest mongo:8.0
+          image: mongo:8.0@sha256:d7c8d78b890e2d87ff11b30656a6c991addcc260723c9be723123041763d00a8
           imagePullPolicy: IfNotPresent
           # `find -L /data/db \! -user 999 -exec chown 999:999 {} +` mirrors
           # the chown that the upstream docker-entrypoint.sh does *only* when
@@ -92,7 +99,13 @@ spec:
               mountPath: /data/db
       containers:
         - name: mongodb
-          image: mongo:8.0
+          # Pin: `mongo:8.0` is a moving tag; the digest below was resolved
+          # against the linux/arm64 entry of the official multi-arch index
+          # on 2026-08-22 so a pod restart cannot silently land on a
+          # different build than the backup / restore CronJobs beside it.
+          #   docker buildx imagetools inspect mongo:8.0
+          #   crane digest mongo:8.0
+          image: mongo:8.0@sha256:d7c8d78b890e2d87ff11b30656a6c991addcc260723c9be723123041763d00a8
           # Closes issue #104: instead of running mongod directly, run the
           # two-phase entrypoint that bootstraps users (root / app / backup)
           # against a no-auth temporary mongod on 127.0.0.1, then `exec`s the

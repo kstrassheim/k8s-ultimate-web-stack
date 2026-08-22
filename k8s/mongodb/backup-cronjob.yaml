@@ -211,7 +211,16 @@ spec:
             - name: backup
               # mongo:8.0 matches the StatefulSet's image and bundles both
               # mongodump and the GNU tar we need for compression.
-              image: mongo:8.0
+              #
+              # Pin: `mongo:8.0` is a moving tag; the digest below was
+              # resolved against the linux/arm64 entry of the official
+              # multi-arch index on 2026-08-22 so a nightly run cannot
+              # silently land on a different mongodump than the StatefulSet
+              # it is backing up. Must stay in lock-step with the digest in
+              # k8s/mongodb/mongodb.yaml (and restore-job-template.yaml).
+              #   docker buildx imagetools inspect mongo:8.0
+              #   crane digest mongo:8.0
+              image: mongo:8.0@sha256:d7c8d78b890e2d87ff11b30656a6c991addcc260723c9be723123041763d00a8
               imagePullPolicy: IfNotPresent
               command: ["/bin/bash", "/scripts/mongo-backup.sh"]
               env:
