@@ -273,6 +273,84 @@ MongoDB connection uses the Kubernetes-internal Service DNS (`mongodb://mongodb:
 ## Operations
 
 - **Rolling back a bad deploy** — see [`docs/deploy-rollback.md`](docs/deploy-rollback.md). Covers the `git revert + new tag` procedure, why `kubectl rollout undo` does not work here, what is NOT reverted (data, schema, Entra App Reg), and how to restore MongoDB from the nightly backup if the bad release corrupted data.
+- **Restoring from a backup** — see [Restoring from a backup](#restoring-from-a-backup) below. The `scripts/mongo-restore.sh` script + `k8s/mongodb/restore-job-template.yaml` Job template give you a one-shot restore: pick an archive, fill in three env vars, apply the Job, watch the logs.
+
+## Restoring from a backup
+
+The nightly backup CronJob ([`k8s/mongodb/backup-cronjob.yaml`](k8s/mongodb/backup-cronjob.yaml)) writes `tar.gz` archives to the `mongo-backup-data` PVC mounted at `/backup` in the backup pod. Restoring one is a one-shot operation, not a scheduled one — you fill in [`k8s/mongodb/restore-job-template.yaml`](k8s/mongodb/restore-job-template.yaml) for the incident and apply it.
+
+**Archive layout** (what `scripts/mongo-backup.sh` produces, what `scripts/mongo-restore.sh` reads):
+
+- Format: `${MONGO_DB}-<UTC-timestamp>.tar.gz` (e.g. `future_gadget_lab-20260821T030000Z.tar.gz`).
+- Content: `dump/<MONGO_DB>/<collection>.bson` + `dump/<MONGO_DB>/<collection>.metadata.json`. The `dump/` wrapper is mongodump's default with `--out=path`; the restore script tolerates the legacy flat layout (no `dump/`) too.
+- Location: `mongo-backup-data` PVC, mounted at `/backup` in the backup pod.
+
+**Pick an archive** — spawn a one-shot inspection pod with the PVC mounted (replace `<env-namespace>` with `ultimate-web-stack`, `ultimate-web-stack-dev`, or `ultimate-web-stack-test`):
+
+```bash
+kubectl run -n <env-namespace> backup-inspect \
+  --rm -it --restart=Never \
+  --image=mongo:8.0 \
+  --overrides='{
+    "apiVersion": "v1",
+    "spec": {
+      "containers": [{
+        "name": "inspect",
+        "image": "mongo:8.0",
+        "command": ["ls", "-la", "/backup"],
+        "volumeMounts": [{"name": "b", "mountPath": "/backup"}]
+      }],
+      "volumes": [{
+        "name": "b",
+        "persistentVolumeClaim": {"claimName": "mongo-backup-data"}
+      }]
+    }
+  }'
+```
+
+Inside that pod, `tar -tzf /backup/<archive-name>.tar.gz` lists the contents (one row per BSON file) so you can confirm it actually has the data you expect before triggering a restore.
+
+**Run the restore** — copy [`k8s/mongodb/restore-job-template.yaml`](k8s/mongodb/restore-job-template.yaml) to a per-incident file (e.g. `restore-2026-08-22.yaml`) and fill in:
+
+| Field | Example | Notes |
+|-------|---------|-------|
+| `metadata.namespace` | `ultimate-web-stack-dev` | Match the env whose backup PVC you want to read. |
+| `metadata.name` | `mongo-restore-2026-08-22` | Job names must be unique within a namespace. |
+| `env[ARCHIVE].value` | `/backup/future_gadget_lab_dev-20260821T030000Z.tar.gz` | Absolute path on the PVC. |
+| `env[TARGET_DB].value` | `scratch_restore_2026_08_22` | A scratch DB by default — restore into a live DB only after stopping traffic. |
+| `env[SOURCE_DB].value` | `future_gadget_lab_dev` | The DB name *inside* the archive (matches `MONGO_DB` in the backup CronJob for this env: prod `future_gadget_lab`, dev `future_gadget_lab_dev`, test `future_gadget_lab_test`). Defaults to `TARGET_DB` if unset. |
+| `env[FORCE].value` | `0` | `1` to overwrite an existing non-empty target DB. **Destructive** — only set after confirming the target is expendable. |
+
+Apply:
+
+```bash
+kubectl apply -f restore-2026-08-22.yaml
+kubectl logs -f job/mongo-restore-2026-08-22 -n <env-namespace>
+```
+
+The script exits non-zero on any problem with a `RESTORE FAILED archive=… reason=…` log line naming the archive and the cause. On success it logs `RESTORE SUCCEEDED archive=… target_db=… collections=N`.
+
+**Check the result** — verify the target DB now has the expected collections:
+
+```bash
+kubectl run -n <env-namespace> mongosh-verify --rm -it --restart=Never --image=mongo:8.0 \
+  --command -- mongosh "mongodb://mongodb:27017/$(yq '.env[1].value' restore-2026-08-22.yaml)" \
+  --eval "db.getCollectionNames()"
+```
+
+(That one's a mouthful; the practical version is `kubectl exec -it <some-pod> -- mongosh ... --eval ...` against any pod with `mongo:8.0` in the namespace.)
+
+When the restore is verified, delete the one-shot Job:
+
+```bash
+kubectl delete job -n <env-namespace> mongo-restore-2026-08-22
+```
+
+**Safety notes:**
+
+- The script **refuses** to overwrite a non-empty target DB by default. You must set `FORCE=1` to proceed against a target that already has collections — and `FORCE=1` adds `--drop` to `mongorestore`, which deletes the existing collections before restoring.
+- Restoring into the live application DB (`future_gadget_lab` in prod) while the web pods are serving traffic is a recipe for races between the restore and incoming writes. Either restore into a scratch DB and then rename/swap, OR stop the web Deployment first (scale to 0), restore, then scale back.
+- The restore script redacts the password segment of `MONGO_URI` before logging (same as the backup script, closes issue #104) — `kubectl logs` on a restore Job is safe to share for debugging.
 
 ## Reference
 

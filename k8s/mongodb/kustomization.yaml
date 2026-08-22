@@ -5,3 +5,9 @@ resources:
   - mongodb.yaml
   - mongodb-entrypoint-configmap.yaml
   - backup-cronjob.yaml
+  # restore-job.yaml carries the ConfigMap with the inline copy of
+  # scripts/mongo-restore.sh (closes issue #105). The Job template
+  # itself lives in restore-job-template.yaml and is NOT applied via
+  # kustomize — operators copy it per-incident (see the README
+  # "Restoring from a backup" runbook).
+  - restore-job.yaml

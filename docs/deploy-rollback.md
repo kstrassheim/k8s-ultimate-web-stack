@@ -373,13 +373,15 @@ corrupted MongoDB, restore from the nightly backup:
       }
     }'
   ```
-- The actual restore-from-backup procedure (download the archive,
-  extract it, run `mongorestore`) is intentionally scoped out of
-  this runbook — it is a separate procedure tied to the backup
-  format in `scripts/mongo-backup.sh`. The script's output
-  (`BACKUP SUCCEEDED archive=... size=...`) names the archive;
-  `tar -tzf <archive>` lists the contents; `mongorestore --uri=...
-  --archive=<archive>` restores them.
+- The actual restore-from-backup procedure lives in the README
+  runbook ["Restoring from a backup"](../README.md#restoring-from-a-backup)
+  (closes issue #105). `scripts/mongo-restore.sh` + the one-shot
+  Job template in `k8s/mongodb/restore-job-template.yaml` cover the
+  end-to-end: pick an archive via an inspection pod, fill in
+  `ARCHIVE` / `TARGET_DB` / `SOURCE_DB` / `FORCE`, apply the Job,
+  watch `RESTORE SUCCEEDED archive=… target_db=… collections=N` in
+  the logs. The script refuses to overwrite an existing non-empty
+  target DB unless `FORCE=1` (opt-in destructive path).
 
 ## Immutable references
 

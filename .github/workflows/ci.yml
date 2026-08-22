@@ -150,6 +150,60 @@ jobs:
           fi
           echo "OK: inline ConfigMap body matches scripts/mongo-backup.sh"
 
+  bash-restore-tests:
+    # Smoke tests + drift guard for scripts/mongo-restore.sh.
+    #
+    # Closes the loop on issue #105's acceptance criteria by exercising
+    # every error path the script claims to handle (missing archive,
+    # empty/corrupt archive, missing env vars, target DB non-empty + no
+    # FORCE refusal, target DB non-empty + FORCE=1 overwrite, mongosh
+    # pre-flight failure, mongorestore failure, cross-database restore,
+    # legacy archive layout, archive without expected source_db, EROFS
+    # on /tmp, credentialed MONGO_URI redaction) AND by exercising the
+    # full round-trip (seed → mongo-backup.sh → mongo-restore.sh →
+    # verify seed file survived the trip). The drift guard diffs the
+    # inline ConfigMap body in k8s/mongodb/restore-job.yaml against
+    # scripts/mongo-restore.sh, so there is one source of truth
+    # (scripts/, exercised by the smoke tests) and zero risk of the
+    # inline copy silently drifting — same pattern as bash-backup-tests
+    # and bash-entrypoint-tests.
+    name: Bash Restore Smoke Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Bash syntax check on the script
+        # `bash -n` parses without executing — catches unbalanced quotes /
+        # heredocs before any test scenario runs.
+        run: bash -n scripts/mongo-restore.sh
+
+      - name: Run restore script smoke tests
+        run: bash scripts/mongo-restore_test.sh
+
+      - name: Verify inline ConfigMap body matches scripts/mongo-restore.sh
+        # Extract the indented block under `data.mongo-restore.sh: |` from
+        # the ConfigMap manifest, strip comments + blank lines, and diff
+        # against the same view of scripts/mongo-restore.sh. Exits 0 on
+        # match, 1 on any divergence (which fails the CI run).
+        run: |
+          set -euo pipefail
+          awk '
+            /^  mongo-restore.sh: \|/ { in_data = 1; next }
+            in_data && /^[^ ]/         { in_data = 0 }
+            in_data                     { sub(/^    /, ""); print }
+          ' k8s/mongodb/restore-job.yaml \
+            | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' \
+            > /tmp/inline_restore.sh
+          grep -v '^[[:space:]]*#' scripts/mongo-restore.sh \
+            | grep -v '^[[:space:]]*$' \
+            > /tmp/file_restore.sh
+          if ! diff -u /tmp/file_restore.sh /tmp/inline_restore.sh; then
+            echo "::error::The inline ConfigMap body in k8s/mongodb/restore-job.yaml has drifted from scripts/mongo-restore.sh. Update the inline copy (or vice-versa) and re-run CI." >&2
+            exit 1
+          fi
+          echo "OK: inline ConfigMap body matches scripts/mongo-restore.sh"
+
   bash-entrypoint-tests:
     # Smoke tests + drift guard for scripts/mongo-entrypoint.sh.
     #
