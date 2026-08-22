@@ -26,6 +26,28 @@ spec:
   # connection list, so multiple replicas can't see each other's WS clients.
   # Scaling >1 would need a pub/sub backplane (e.g. Redis).
   replicas: 1
+  # Explicit RollingUpdate for a 1-replica Deployment (issue #107).
+  #
+  # The default maxUnavailable is 25%, which rounds UP to 1 here — Kubernetes
+  # may take the only pod down before the replacement is ready, producing a
+  # window of 502s on every deploy. Deploys are frequent because CI restarts
+  # the rollout to pick up the mutable image tag (see .github/workflows/
+  # _build-env.yml). /ready (added in #100) already gates Service traffic on
+  # real readiness, so the missing piece is forcing the rollout to bring the
+  # new pod up first.
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  # NOTE on the interaction with replicas: 1: maxSurge: 1 means two pods
+  # coexist briefly during a rollout. WebSocket clients on the OLD pod are
+  # disconnected at its termination rather than migrated — there is no
+  # pub/sub backplane (see the replicas comment above). The client
+  # reconnects on its next retry, which is the established behaviour for
+  # this API. Recorded as an explicit decision so a future maintainer who
+  # sees "two pods during a rollout" does not assume WS continuity by
+  # accident.
   selector:
     matchLabels:
       app: web
