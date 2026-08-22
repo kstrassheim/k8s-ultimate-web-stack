@@ -384,6 +384,7 @@ all. The pipelines set both; if only one is set, that consumer falls back to the
 Azure CLI credential and fails with *"Please specify only one of subscription
 and tenant, not both"*.
 
-The state blobs are named `dev.tfstate` / `test.tfstate` / `prod.tfstate`. The
-older `app-reg-*.tfstate` blobs are the pre-migration copies and are no longer
-read.
+The state blobs are named `dev.tfstate` / `test.tfstate` / `prod.tfstate`. All
+three are migrated and encrypted, and the migration fallback has been removed —
+unencrypted state is no longer accepted. The older `app-reg-*.tfstate` blobs are
+the pre-migration copies and are no longer read.

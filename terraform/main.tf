@@ -34,10 +34,6 @@ terraform {
   #
   # `tofu init -backend=false` and `tofu validate` never contact the vault, so
   # the credential-free validate job in ci.yml keeps working.
-  #
-  # MIGRATION: the `fallback` lets the first run per environment read the state
-  # while it is still unencrypted and write it back encrypted. Remove it once
-  # dev, test and prod have each applied.
   # ---------------------------------------------------------------------------
   encryption {
     key_provider "azure_vault" "state" {
@@ -55,14 +51,8 @@ terraform {
       keys = key_provider.azure_vault.state
     }
 
-    method "unencrypted" "migrate" {}
-
     state {
       method = method.aes_gcm.state
-
-      fallback {
-        method = method.unencrypted.migrate
-      }
     }
 
     plan {
