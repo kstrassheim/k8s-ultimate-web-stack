@@ -14,6 +14,13 @@ labels:
 resources:
   - ../base
   - ingress.yaml
+  # DEV ONLY. Read-only visibility for the claw-code-local bot so it can
+  # diagnose a broken environment rather than guess from the repo. Scoped to
+  # dev deliberately: this is where the bot's tester points, and where a
+  # broken deploy is expected rather than an incident. Widening it to test or
+  # prod is a separate decision, and the file lives here rather than in
+  # ../../rbac because kustomize refuses to load a FILE from above its root.
+  - claw-bot-read-rbac.yaml
 
 images:
   - name: mainpi.local:5000/ultimate-web-stack/web

@@ -1,0 +1,57 @@
+# Lets the claw-code-local bot SEE this namespace, so it can diagnose a broken
+# environment instead of guessing at it from the repository alone.
+#
+# WHY THIS EXISTS
+# The bot solves issues against this repo, and its tester runs against
+# `web.ultimate-web-stack-dev`. When that deployment broke — mongodb
+# crash-looping, every web pod stuck on a missing secret — the bot could see
+# only that "deploy checks failed". It had no way to find out WHY: its
+# ServiceAccount is permission-less outside its own namespace, so `kubectl get
+# pods`, `describe`, and events were all denied. A human had to read the
+# events and hand it the answer.
+#
+# READ-ONLY, DELIBERATELY. Argo owns this namespace and self-heals it; a bot
+# that could write here would fight the sync loop, and a bot that could delete
+# here could destroy an environment while trying to repair it. Diagnosis is
+# the job — the FIX belongs in a pull request against these manifests, where a
+# person reviews it.
+#
+# SECRETS ARE NOT GRANTED, and that is not an oversight. A `list` on secrets
+# returns their VALUES, so there is no "see that it exists but not what it
+# holds" verb in Kubernetes RBAC. The bot does not need one: a missing secret
+# shows up in pod events as `Error: secret "..." not found`, which is exactly
+# how this failure was diagnosed by hand.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: claw-bot-read
+rules:
+  # What is running, and what happened to it.
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "events", "services",
+                "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch"]
+  # Why it is running, or is not.
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources: ["jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+  # Events again, from the newer API group — a cluster may serve either.
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: claw-bot-read
+subjects:
+  - kind: ServiceAccount
+    name: openclaw
+    namespace: claw-code-local
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: claw-bot-read
