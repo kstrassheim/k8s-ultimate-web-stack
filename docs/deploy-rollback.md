@@ -50,13 +50,13 @@ following are **not** reverted and require separate procedures:
   the new tag), so a manifest-level bad change IS reverted by the
   procedure — but only as a side-effect of ArgoCD's manifest sync,
   not by anything this runbook does directly.
-- **Entra ID App Reg.** Provisioned by Terraform (`terraform/`), out
-  of band of the deploy. A bad Terraform change is reverted by
-  running `terraform apply` against the previous state, not by a
+- **Entra ID App Reg.** Provisioned by OpenTofu (`terraform/`), out
+  of band of the deploy. A bad OpenTofu change is reverted by
+  running `tofu apply` against the previous state, not by a
   deploy rollback. Note that the GitHub `prod` environment gates
-  CI's terraform-apply, so a revert+new-tag alone won't undo an App
-  Reg change — that requires a manual `terraform apply` from the
-  previous commit (or re-running CI's terraform job after reverting
+  CI's tofu apply, so a revert+new-tag alone won't undo an App
+  Reg change — that requires a manual `tofu apply` from the
+  previous commit (or re-running CI's OpenTofu job after reverting
   the terraform/ change).
 - **Container image history.** The previous `:dev` / `:test` / `:prod`
   image is overwritten on each release (mutable tag). It is not

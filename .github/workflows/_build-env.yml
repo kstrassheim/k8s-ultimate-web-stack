@@ -30,46 +30,58 @@ permissions:
   contents: read
 
 jobs:
-  terraform-config:
-    name: Terraform apply + config
+  tofu-config:
+    name: OpenTofu apply + config
     runs-on: ubuntu-latest
     environment: ${{ inputs.gh_environment }}
     env:
       TF_ENV: ${{ inputs.tf_env }}
+      # TF_VAR_env is what selects the state blob now: backend.key is
+      # "app-reg-${var.env}.tfstate", resolved at `tofu init`. Without it every
+      # environment would init against app-reg-dev.tfstate.
+      TF_VAR_env: ${{ inputs.tf_env }}
       ARM_USE_OIDC: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # The azure_vault key provider does NOT read ARM_* -- it only takes these
+      # as block arguments, fed here by TF_VAR_*. ARM_USE_OIDC above stays for
+      # the backend and the azurerm provider. Set one without the other and
+      # that consumer falls back to AzureCLICredential, which fails with
+      # "Please specify only one of subscription and tenant, not both".
+      TF_VAR_use_oidc: "true"
+      TF_VAR_arm_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+      TF_VAR_arm_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
     concurrency:
-      group: terraform-app-reg-${{ inputs.tf_env }}
+      group: tofu-app-reg-${{ inputs.tf_env }}
       cancel-in-progress: false
     steps:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v4
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v2
         with:
-          terraform_version: 1.9.0
+          tofu_version: 1.12.6
 
-      - name: Terraform apply + export config
+      - name: OpenTofu apply + export config
         working-directory: terraform
         run: |
           set -euo pipefail
-          terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
-          terraform apply -auto-approve -no-color -var="env=${TF_ENV}"
-          terraform output -json > terraform.config.json
+          tofu init
+          tofu apply -auto-approve -no-color
+          tofu output -json > terraform.config.json
 
       - name: Upload config artifact
         uses: actions/upload-artifact@v7
         with:
-          name: web-terraform-config-${{ inputs.tf_env }}
+          name: web-tofu-config-${{ inputs.tf_env }}
           path: terraform/terraform.config.json
           retention-days: 1
 
   build-push:
     name: Build & push web image
-    needs: terraform-config
+    needs: tofu-config
     runs-on: arc-runner-scale-k8s-ultimate-web-stack
     steps:
       - name: Checkout
@@ -78,7 +90,7 @@ jobs:
       - name: Fetch terraform config
         uses: actions/download-artifact@v8
         with:
-          name: web-terraform-config-${{ inputs.tf_env }}
+          name: web-tofu-config-${{ inputs.tf_env }}
           path: _tfconfig
 
       - name: Place config for build (frontend build + backend runtime)
