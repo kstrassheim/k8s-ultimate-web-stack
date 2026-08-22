@@ -10,10 +10,10 @@ This is not a reimplementation of the application logic — the app code is iden
 |---------|-------------------|------------------------|
 | **Runtime platform** | Azure App Service (F1 Free Plan) | Self-hosted k8s (Orange Pi, OpenClaw) |
 | **Database** | Azure CosmosDB (serverless NoSQL) | MongoDB StatefulSet in-cluster |
-| **Auth** | Entra ID + Terraform-provisioned App Reg | Same Entra ID App Reg; Terraform still handles App Reg creation |
+| **Auth** | Entra ID + OpenTofu-provisioned App Reg | Same Entra ID App Reg; OpenTofu still handles App Reg creation |
 | **Observability** | Azure App Insights | OpenTelemetry (otel-collector, Prometheus/Grafana ready) |
 | **Secrets** | None (managed identity, no keys) | Sealed Secrets (cryptographically sealed K8s Secrets) |
-| **IaC** | Terraform provisions everything | Terraform handles App Reg only; k8s manifests handle runtime infra |
+| **IaC** | OpenTofu provisions everything | OpenTofu handles App Reg only; k8s manifests handle runtime infra |
 | **Deployment method** | `az webapp up` / CI → Azure | ArgoCD app-of-apps → k8s cluster |
 | **Environments** | dev / test / prod (Azure App Service slots) | dev / test / prod (k8s namespaces, kustomize overlays) |
 | **Container registry** | Azure Container Apps registry | Self-hosted container registry |
@@ -80,20 +80,22 @@ k8s-ultimate-web-stack/
 - **ArgoCD** installed in-cluster
 - **Container registry** — self-hosted registry
 - **Entra ID** tenant (for App Reg — same as ultimate-web-stack)
-- **Terraform** (for App Reg provisioning only)
+- **OpenTofu** (>= 1.9, for App Reg provisioning only). **Not** HashiCorp Terraform: the state is encrypted with an Azure Key Vault key using OpenTofu's `azure_vault` key provider, and Terraform cannot read it.
 
 ### 1. Provision Entra ID App Reg
 
 ```bash
 cd terraform
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars — set app_name, tenant_id, subscription_id
-terraform init
-terraform plan
-terraform apply
+# terraform.tfvars is checked in and sets app_name. Do NOT set env there:
+# backend.key is "${var.env}.tfstate" and a tfvars value outranks TF_VAR_env,
+# which would make every environment use dev's state.
+tofu init                       # defaults to dev
+TF_VAR_env=test tofu init -reconfigure   # or test / prod
+tofu plan
+tofu apply
 ```
 
-This creates the App Registration in Entra ID. The app code (backend/frontend) reads auth config from `terraform.output.json` or environment variables — same as ultimate-web-stack.
+This creates the App Registration in Entra ID. The app code (backend/frontend) reads auth config from `terraform.config.json` or environment variables — same as ultimate-web-stack.
 
 ### 2. Build and push container images
 
@@ -355,3 +357,33 @@ kubectl delete job -n <env-namespace> mongo-restore-2026-08-22
 ## Reference
 
 - Parent project: [ultimate-web-stack](https://github.com/kstrassheim/ultimate-web-stack)
+
+## State encryption
+
+State lives in the `k8s-ultimate-web-stack` blob container of the `mytofustates`
+storage account and is **encrypted by OpenTofu itself**, on top of Azure's
+storage encryption. A fresh AES-GCM data key is generated per run and wrapped
+with the RSA key `k8s-ultimate-web-stack` in the `kv-mytofustates` Key Vault, so
+key material never leaves the vault.
+
+- **HashiCorp Terraform cannot read this state.** Use `tofu`.
+- The backend derives its own values — `container_name = var.app_name` and
+  `key = "${var.env}.tfstate"` — via OpenTofu early evaluation, resolved at
+  `tofu init` before state exists. That syntax is not parseable by Terraform.
+- `deploy-k8s-ultimate-web-stack` holds `Key Vault Crypto User` scoped to that
+  **single key object**, not to the vault, so it cannot decrypt another
+  project's state.
+- `tofu init -backend=false` and `tofu validate` never contact the vault, which
+  is why the credential-free validate job in `ci.yml` still works.
+
+Locally the key provider authenticates through your `az login` session. CI uses
+GitHub OIDC, which needs `TF_VAR_use_oidc=true` plus `TF_VAR_arm_client_id` /
+`TF_VAR_arm_tenant_id`. Those are separate from `ARM_USE_OIDC`, which configures
+the backend and the azurerm provider — the key provider does not read `ARM_*` at
+all. The pipelines set both; if only one is set, that consumer falls back to the
+Azure CLI credential and fails with *"Please specify only one of subscription
+and tenant, not both"*.
+
+The state blobs are named `dev.tfstate` / `test.tfstate` / `prod.tfstate`. The
+older `app-reg-*.tfstate` blobs are the pre-migration copies and are no longer
+read.

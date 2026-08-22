@@ -1,4 +1,4 @@
-name: Terraform
+name: OpenTofu
 
 # Plan runs on every PR to main/prod (apply lives in build-images.yml, on merge).
 on:
@@ -16,19 +16,31 @@ permissions:
 # plans on PRs. Per-env concurrency (job level) keeps plan off an in-flight apply.
 
 jobs:
-  terraform-plan:
-    name: Terraform Plan
+  tofu-plan:
+    name: OpenTofu Plan
     runs-on: ubuntu-latest
     # PR base picks the env: PR -> prod plans test, otherwise dev.
     environment: ${{ github.base_ref == 'prod' && 'test' || 'dev' }}
     env:
       TF_ENV: ${{ github.base_ref == 'prod' && 'test' || 'dev' }}
+      # TF_VAR_env is what selects the state blob now: backend.key is
+      # "app-reg-${var.env}.tfstate", resolved at `tofu init`. Without it every
+      # environment would init against app-reg-dev.tfstate.
+      TF_VAR_env: ${{ github.base_ref == 'prod' && 'test' || 'dev' }}
       ARM_USE_OIDC: "true"
       ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
       ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      # The azure_vault key provider does NOT read ARM_* -- it only takes these
+      # as block arguments, fed here by TF_VAR_*. ARM_USE_OIDC above stays for
+      # the backend and the azurerm provider. Set one without the other and
+      # that consumer falls back to AzureCLICredential, which fails with
+      # "Please specify only one of subscription and tenant, not both".
+      TF_VAR_use_oidc: "true"
+      TF_VAR_arm_client_id: ${{ secrets.AZURE_CLIENT_ID }}
+      TF_VAR_arm_tenant_id: ${{ secrets.AZURE_TENANT_ID }}
     concurrency:
-      group: terraform-app-reg-${{ github.base_ref == 'prod' && 'test' || 'dev' }}
+      group: tofu-app-reg-${{ github.base_ref == 'prod' && 'test' || 'dev' }}
       cancel-in-progress: false
     permissions:
       id-token: write
@@ -40,10 +52,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v4
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v2
         with:
-          terraform_version: 1.9.0
+          tofu_version: 1.12.6
 
       - name: Azure Login via OIDC
         uses: azure/login@v3
@@ -52,23 +64,23 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
-      - name: Terraform Init
+      - name: OpenTofu Init
         working-directory: terraform
-        run: terraform init -backend-config="key=app-reg-${TF_ENV}.tfstate"
+        run: tofu init
 
-      - name: Terraform Plan
+      - name: OpenTofu Plan
         working-directory: terraform
-        run: terraform plan -no-color -var="env=${TF_ENV}" -out=tfplan > tfplan_output.txt 2>&1 || true; terraform show -no-color tfplan >> tfplan_output.txt 2>&1 || true
+        run: tofu plan -no-color -out=tfplan > tfplan_output.txt 2>&1 || true; tofu show -no-color tfplan >> tfplan_output.txt 2>&1 || true
         id: tfplan
 
-      - name: Upload Terraform Plan Artifact
+      - name: Upload OpenTofu Plan Artifact
         uses: actions/upload-artifact@v7
         with:
           name: tfplan
           path: terraform/tfplan
           retention-days: 7
 
-      - name: Post Terraform Plan as PR Comment
+      - name: Post OpenTofu Plan as PR Comment
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v9
         with:
