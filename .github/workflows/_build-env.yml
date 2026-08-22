@@ -45,10 +45,10 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Set up Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@v4
         with:
           terraform_version: 1.9.0
 
@@ -61,7 +61,7 @@ jobs:
           terraform output -json > terraform.config.json
 
       - name: Upload config artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: web-terraform-config-${{ inputs.tf_env }}
           path: terraform/terraform.config.json
@@ -73,10 +73,10 @@ jobs:
     runs-on: arc-runner-scale-k8s-ultimate-web-stack
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Fetch terraform config
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: web-terraform-config-${{ inputs.tf_env }}
           path: _tfconfig
@@ -107,7 +107,7 @@ jobs:
       # k8s/base/runner-rollout-rbac.yaml. The apps ignore the restartedAt
       # annotation so this doesn't fight selfHeal.
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v4
+        uses: azure/setup-kubectl@v5
       - name: Roll out new image
         run: |
           set -euo pipefail
