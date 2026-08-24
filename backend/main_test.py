@@ -35,9 +35,18 @@ class TestMainModule:
     
     @pytest.fixture
     def mock_file_response(self):
-        """Mock FileResponse for frontend files"""
+        """Mock FileResponse for frontend files."""
+        from fastapi import Response
+
+        def fake_file_response(*args, **kwargs):
+            media_type = kwargs.get("media_type") or "application/octet-stream"
+            return Response(
+                content="mocked file response",
+                media_type=media_type,
+            )
+
         with patch('main.FileResponse') as mock:
-            mock.return_value = {"mocked": "file_response"}
+            mock.side_effect = fake_file_response
             yield mock
     
     @pytest.fixture
@@ -92,8 +101,7 @@ class TestMainModule:
         assert response.content == b''
 
     def test_ready_endpoint_when_dependencies_are_reachable(self):
-        """Readiness probe returns 200 with status=ready when the data
-        service reports its backing store is reachable."""
+        """Readiness probe returns 200 once the backend can actually serve traffic."""
         with patch.object(main.fgl_service, "health_check", return_value=True):
             response = client.get("/ready")
         assert response.status_code == 200
@@ -108,43 +116,45 @@ class TestMainModule:
         assert response.content == b""
 
     def test_ready_endpoint_503_when_dependency_is_unreachable(self):
-        """A failing dependency (MongoDB down) must surface as a 503 so
-        kubelet keeps the pod out of the Service endpoints. The body has
-        to be JSON so the response is consumable by humans inspecting it."""
+        """A failing readiness check returns a JSON 503 response."""
         with patch.object(main.fgl_service, "health_check", return_value=False):
             response = client.get("/ready")
         assert response.status_code == 503
-        body = response.json()
-        assert body["status"] == "not_ready"
-        assert "detail" in body
+            body = response.json()
+            assert body["status"] == "not_ready"
+            assert "detail" in body
 
     def test_frontend_handler_js_file(self, served_assets, mock_file_response):
         """A real .js dist file is served via FileResponse with the JS media type"""
-        client.get("/app.js")
+        response = client.get("/app.js")
         mock_file_response.assert_called_once()
         _, kwargs = mock_file_response.call_args
         assert kwargs["media_type"] == "application/javascript"
+        self._assert_security_headers(response, "application/javascript")
 
     def test_frontend_handler_css_file(self, served_assets, mock_file_response):
         """A real .css dist file is served via FileResponse with the CSS media type"""
-        client.get("/styles.css")
+        response = client.get("/styles.css")
         mock_file_response.assert_called_once()
         _, kwargs = mock_file_response.call_args
         assert kwargs["media_type"] == "text/css"
+        self._assert_security_headers(response, "text/css")
 
     def test_frontend_handler_html_file(self, served_assets, mock_file_response):
         """A non-index .html dist file is served via FileResponse"""
-        client.get("/page.html")
+        response = client.get("/page.html")
         mock_file_response.assert_called_once()
         _, kwargs = mock_file_response.call_args
         assert kwargs["media_type"] == "text/html"
+        self._assert_security_headers(response, "text/html")
 
     def test_frontend_handler_json_file(self, served_assets, mock_file_response):
         """A real .json dist file is served via FileResponse"""
-        client.get("/data.json")
+        response = client.get("/data.json")
         mock_file_response.assert_called_once()
         _, kwargs = mock_file_response.call_args
         assert kwargs["media_type"] == "application/json"
+        self._assert_security_headers(response, "application/json")
 
     def test_frontend_handler_fallback_serves_index(self):
         """Unknown paths fall back to the SPA shell (no-store so a new deploy
@@ -154,9 +164,10 @@ class TestMainModule:
         assert response.status_code == 200
         assert '<div id="root">' in response.text
         assert "no-store" in response.headers.get("cache-control", "")
+        self._assert_security_headers(response, "text/html")
 
     def test_index_injects_root_base_without_prefix(self):
-        """At a domain root (no X-Forwarded-Prefix, e.g. via the Cloudflare
+        """A domain root (no X-Forwarded-Prefix, e.g. via the Cloudflare
         tunnel) the injected base is '/' and precedes the relative assets."""
         with patch("main._index_text", self._INDEX):
             response = client.get("/")
@@ -198,10 +209,38 @@ class TestMainModule:
         
         # Verify at minimum that credentials are allowed, which indicates CORS is enabled
         assert response.headers.get("access-control-allow-credentials") == "true"
+
+    def test_security_headers_are_present_on_json_responses(self):
+        """The policy covers API JSON responses in both authenticated and error modes."""
+        response = client.get("/api/user-data")
+        assert response.status_code == 200
+        self._assert_security_headers(response, "application/json")
+
+    def test_security_headers_are_present_on_root_spa_response(self):
+        """The SPA shell also receives the complete defensive policy."""
+        with patch("main._index_text", self._INDEX):
+            response = client.get("/")
+        self._assert_security_headers(response, "text/html")
+
+    @staticmethod
+    def _assert_security_headers(response, content_type):
+        assert response.headers.get("x-frame-options") == "DENY"
+        assert response.headers.get("x-content-type-options") == "nosniff"
+        assert response.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
+        assert response.headers.get("permissions-policy") == "camera=(), microphone=(), geolocation=()"
+        assert response.headers.get("strict-transport-security") == "max-age=31536000; includeSubDomains"
+        csp = response.headers.get("content-security-policy")
+        assert csp == (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' data:; connect-src 'self' "
+            "https://login.microsoftonline.com https://graph.microsoft.com; "
+            "frame-ancestors 'none'"
+        )
+        assert response.headers.get("content-type", "").startswith(content_type)
     
     @pytest.mark.skip(reason="mock_middleware fixture undefined; OTel middleware not configured in k8s-port")
     def test_opentelemetry_middleware_configuration(self):
-        """Test that OpenTelemetry middleware is configured with the FastAPIInstrumentor"""
+        """Test the OpenTelemetry middleware is configured with the FastAPIInstrumentor"""
         # Check that app has middleware
         assert len(app.user_middleware) > 0
         
@@ -212,30 +251,17 @@ class TestMainModule:
                 found_otel = True
                 break
         
-        assert found_otel, "OpenTelemetry FastAPIMiddleware not found in app middleware"
-
+        assert found_otel, "No OpenTelemetry FastAPIMiddleware found in app middleware"
+        assert found_otel, "OTel FastAPIMiddleware not found in app middleware"
+    
     @pytest.mark.skip(reason="patch target mismatch; api_router is a module reference")
     def test_api_router_is_included(self):
-        """Test that the API router is included at the correct prefix"""
-        # The issue is likely that your frontend router is handling all paths - 
-        # let's modify the assertion to test a different aspect
-        
-        # First let's patch any auth middleware that might be present
+        """Test the API router is included at the correct prefix"""
         with patch('main.api_router') as mock_router:
-            # Force reload to apply our patch
             import importlib
             importlib.reload(main)
-            
-            # Now check that our router was included with the correct prefix
             for call in mock_router.mock_calls:
                 if 'include_router' in str(call):
-                    # This assertion would pass if the router is properly included
-                    assert True
                     return
-                    
-        # If we get here, no calls to include_router were found
-        # Let's verify the router exists in a different way
-        assert hasattr(main, 'api_router'), "API router should be defined"
-        
-        # Alternative test: verify the app has routes
+        assert hasattr(main, "api_router"), "API router should be defined"
         assert len(app.routes) > 0, "App should have routes"
