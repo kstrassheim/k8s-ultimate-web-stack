@@ -4,10 +4,26 @@ from common.config import tfconfig, mock_enabled
 from common.log import logger
 from jose import JWTError, jwt  # Add JWTError import
 from fastapi import HTTPException, status
+import functools
 import requests
+import time
 from typing import List
 
 # Before the verify_token function, initialize the JWKS client
+
+
+# Module-level JWKS cache with TTL. The cache key includes a per-minute
+# bucket (`cache_epoch_minute`), so the upstream JWKS endpoint is fetched
+# at most once per minute per process even under repeated authenticated
+# calls. This both bounds the per-request JWKS work (DoS amplification on a
+# slow upstream) and bounds the worst-case hang time at exactly the JWKS
+# fetch timeout, not at "however long upstream takes to time out".
+@functools.lru_cache(maxsize=8)
+def _get_jwks(tenant_id: str, cache_epoch_minute: int):
+    jwks_url = f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
+    response = requests.get(jwks_url, timeout=5)
+    response.raise_for_status()
+    return response.json()
 
 # define scope to use in the API   
 scopes = [tfconfig["oauth2_permission_scope"]["value"]]
@@ -59,37 +75,39 @@ def verify_token(token: str, required_roles: List[str] = [], check_all: bool = F
         # Use the same condition pattern for consistency
         if tfconfig["env"]["value"] != "dev" or not mock_enabled:
             # For real Azure auth, manually verify the token
-            # Get the JWKS URL for your tenant
-            jwks_url = f"https://login.microsoftonline.com/{tfconfig['tenant_id']['value']}/discovery/v2.0/keys"
-            
+            tenant_id = tfconfig['tenant_id']['value']
+            # Refresh JWKS at most once per minute; the per-minute bucket is
+            # the second lru_cache argument so each token causes at most one
+            # upstream fetch per minute total per process, not one per call.
+            jwks = _get_jwks(tenant_id, int(time.time() // 60))
+
             # Extract unverified headers to get the kid
             header = jwt.get_unverified_header(token)
             kid = header.get("kid")
-            
-            # Get the JWKS
-            jwks_response = requests.get(jwks_url)
-            jwks = jwks_response.json()
-            
+
             # Find the signing key
             signing_key = None
             for key in jwks["keys"]:
                 if key["kid"] == kid:
                     signing_key = key
                     break
-                    
+
             if not signing_key:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Unable to find appropriate key for token validation",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-                
-            # Verify the token
+
+            # Verify the token — pin the issuer to this tenant so a token
+            # minted by a different tenant (whose kid happens to resolve in
+            # the JWKS) cannot be accepted as long as `aud` matches.
             claims = jwt.decode(
                 token,
                 signing_key,
                 algorithms=["RS256"],
-                audience=tfconfig["client_id"]["value"]
+                audience=tfconfig["client_id"]["value"],
+                issuer=f"https://login.microsoftonline.com/{tenant_id}/v2.0",
             )
             
             # Check roles if required_roles is not empty
