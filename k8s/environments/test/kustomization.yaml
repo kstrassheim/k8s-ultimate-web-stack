@@ -15,7 +15,6 @@ labels:
 
 resources:
   - ../base
-  - ingress.yaml
   # Per-namespace defaults + envelope (closes issue #109).
   - limit-range.yaml
   - resource-quota.yaml
@@ -33,3 +32,8 @@ patches:
     target:
       kind: CronJob
       name: mongo-backup
+  # Per-env Ingress sub-path patch (closes issue #110).
+  - path: patch-ingress.yaml
+    target:
+      kind: Ingress
+      name: web

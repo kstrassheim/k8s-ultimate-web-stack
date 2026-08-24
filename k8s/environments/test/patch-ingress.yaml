@@ -1,0 +1,18 @@
+# ==============================
+# TEST Ingress patch
+# https://datapi.galaxus.box/ultimate-web-stack-test -> web:8000
+#
+# Sets the per-env public sub-path on the base Ingress. Replaces both
+# host-rule paths and the x-forwarded-prefix annotation so the three
+# values cannot drift out of sync. See k8s/environments/base/ingress.yaml
+# for the rewrite-target / x-forwarded-prefix explanation.
+# ==============================
+- op: replace
+  path: /metadata/annotations/nginx.ingress.kubernetes.io~1x-forwarded-prefix
+  value: /ultimate-web-stack-test
+- op: replace
+  path: /spec/rules/0/http/paths/0/path
+  value: /ultimate-web-stack-test(/|$)(.*)
+- op: replace
+  path: /spec/rules/1/http/paths/0/path
+  value: /ultimate-web-stack-test(/|$)(.*)

@@ -17,3 +17,6 @@ resources:
   - ../../web
   - ../../network
   - ../../rbac
+  # Common Ingress template — the per-env sub-path annotation and path are
+  # applied by patch-ingress.yaml in each env overlay (closes issue #110).
+  - ingress.yaml
