@@ -1,0 +1,59 @@
+# Common Ingress template. Each env's `patch-ingress.yaml` overrides the
+# public sub-path annotation and the regex path in both host rules with
+# that env's URL prefix (dev / test / prod).
+#
+# Why the path AND the x-forwarded-prefix annotation matter together:
+# rewrite-target strips the matched prefix so the backend serves at root;
+# x-forwarded-prefix tells the backend the public sub-path so it injects
+# the matching <base href> (the SPA is built with relative Vite base).
+# A prefix and its x-forwarded-prefix that disagree give a subtly broken
+# SPA — wrong <base href>, asset 404s — not an obvious error. Keeping
+# the two values in the same per-env patch is what makes that mistake
+# impossible: there is exactly one place to set the sub-path per env.
+#
+# The `__REPLACE_VIA_PATCH__` sentinels below are placeholders for the
+# per-env patch values; they would be invalid as written if the base
+# were rendered on its own, but the base is never rendered directly —
+# only through the env overlays, which replace them.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  annotations:
+    cert-manager.io/cluster-issuer: mainpi-ca
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+    # Overridden by patch-ingress.yaml in each env overlay. The leading
+    # slash here is the same shape nginx-ingress expects at runtime; the
+    # placeholder text is only ever seen in the base file's source.
+    nginx.ingress.kubernetes.io/x-forwarded-prefix: __REPLACE_VIA_PATCH__
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/use-regex: "true"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "false"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: datapi.galaxus.box
+      http:
+        paths:
+          # Overridden by patch-ingress.yaml in each env overlay.
+          # (/|$)(.*) anchors the regex to a path-segment boundary so the
+          # rewrite-target can capture the trailing segment as $2.
+          - path: __REPLACE_VIA_PATCH__(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+    - host: datapi.local
+      http:
+        paths:
+          - path: __REPLACE_VIA_PATCH__(/|$)(.*)
+            pathType: ImplementationSpecific
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
