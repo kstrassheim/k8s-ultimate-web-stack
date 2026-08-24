@@ -9,7 +9,13 @@ module.exports ={
       "^@/(.*)$": "<rootDir>/src/$1"
     },
     transform: {
-        "^.+\\.[jt]sx?$": ["@swc/jest"]
+        "^.+\\.[jt]sx?$": ["@swc/jest"],
+        // react-router@8 transitively imports cookie-es@3.x, which is a
+        // pure-ESM package shipping only `.mjs` files (no CJS build).
+        // Default jest transform regex doesn't match `.mjs`, so add it.
+        // SWC transforms the ESM `export`/`import` statements to CJS so
+        // the jest runtime can load them.
+        "^.+\\.mjs$": ["@swc/jest"]
     },
     transformIgnorePatterns: [
       "/node_modules/(?!module-to-transform)/"

@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom';
 import { jestPreviewConfigure, debug } from 'jest-preview';
 import { TextEncoder, TextDecoder } from 'util';
+import path from 'path';
 import PublicClientApplication from './mock/azureMsalBrowser';
 
 // Provide TextEncoder/TextDecoder in the JSDOM environment for libraries like React Router
@@ -14,6 +15,26 @@ if (!global.TextDecoder) {
 
 
 global.import = { meta: { env: { MODE: 'test', PROD: false, DEV: false, BASE_URL: '/' } } };
+
+// react-router@8 eagerly imports `dist/production/lib/dom/ssr/routeModules.js`
+// from its main entry. That file uses `import.meta.hot` (Vite HMR syntax)
+// which @swc/jest passes through unchanged when emitting CommonJS, then
+// Node's CJS parser fails on ("Cannot use 'import.meta' outside a module").
+// `loadRouteModule` is only invoked by react-router in framework-mode routing
+// (when a route has a `route.module` property from the Vite/react-router
+// plugin). The unit tests for /components/* and /pages/* use
+// `<MemoryRouter>` + `<Routes>` / `<Route>` directly (declarative client-side
+// routing, no framework mode) and never call `loadRouteModule`, so a no-op
+// stub is functionally equivalent for the test surface.
+//
+// virtual:true skips the file resolution — jest registers the mock under the
+// key react-router would import from, so any internal `import "./routeModules.js"`
+// hits the stub instead of the real file.
+jest.doMock(
+  path.resolve(__dirname, 'node_modules/react-router/dist/production/lib/dom/ssr/routeModules.js'),
+  () => ({ loadRouteModule: async () => ({}) }),
+  { virtual: true }
+);
 
 // Create a mock MSAL instance using the full implementation
 const mockMsalInstance = new PublicClientApplication({
