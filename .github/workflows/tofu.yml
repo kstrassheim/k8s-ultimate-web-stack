@@ -57,6 +57,10 @@ jobs:
         with:
           tofu_version: 1.12.6
 
+      - name: OpenTofu Format Check
+        working-directory: terraform
+        run: tofu fmt -check -recursive
+
       - name: Azure Login via OIDC
         uses: azure/login@v3
         with:
@@ -70,8 +74,22 @@ jobs:
 
       - name: OpenTofu Plan
         working-directory: terraform
-        run: tofu plan -no-color -out=tfplan > tfplan_output.txt 2>&1 || true; tofu show -no-color tfplan >> tfplan_output.txt 2>&1 || true
         id: tfplan
+        run: |
+          # Capture the real exit codes of plan and show into $GITHUB_OUTPUT so
+          # a later step can fail the job *after* the PR comment is posted.
+          # Using `set +e` here lets the step itself stay green when plan or
+          # show fails -- the comment still gets posted with the diagnostic,
+          # and the dedicated assertion step below makes CI red.
+          set +e
+          tofu plan -no-color -out=tfplan > tfplan_output.txt 2>&1
+          plan_ec=$?
+          tofu show -no-color tfplan >> tfplan_output.txt 2>&1
+          show_ec=$?
+          {
+            echo "exit_code=${plan_ec}"
+            echo "show_exit_code=${show_ec}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Upload OpenTofu Plan Artifact
         uses: actions/upload-artifact@v7
@@ -79,6 +97,10 @@ jobs:
           name: tfplan
           path: terraform/tfplan
           retention-days: 7
+          # Pin explicitly so a future default change can't start failing this
+          # step on plan failure -- the diagnostic comment and assertion step
+          # below still need to run for a failing plan to report red.
+          if-no-files-found: warn
 
       - name: Post OpenTofu Plan as PR Comment
         if: github.event_name == 'pull_request'
@@ -99,3 +121,12 @@ jobs:
               issue_number: context.issue.number,
               body: '## Terraform Plan\n\n```\n' + planText + '\n```'
             });
+
+      - name: Assert Plan Succeeded
+        # Runs only when plan or show returned a non-zero exit code. The PR
+        # comment was already posted above; this step fails the job so a
+        # broken plan still reports red on CI.
+        if: steps.tfplan.outputs.exit_code != '0' || steps.tfplan.outputs.show_exit_code != '0'
+        run: |
+          echo "::error::tofu plan exited with ${{ steps.tfplan.outputs.exit_code }}, tofu show exited with ${{ steps.tfplan.outputs.show_exit_code }}"
+          exit 1
