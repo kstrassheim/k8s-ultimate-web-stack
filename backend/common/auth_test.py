@@ -299,7 +299,7 @@ def _build_real_env(monkeypatch):
     # Avoid talking to MS at import time when azure_scheme is constructed.
     with patch("fastapi_azure_auth.auth.SingleTenantAzureAuthorizationCodeBearer"):
         import common.auth
-    common.auth._get_jwks.cache_clear()
+    common.auth._clear_jwks_cache()
     return common.auth
 
 
@@ -313,13 +313,13 @@ class TestVerifyTokenJWKSHardening:
         # previous test, clear it before and after.
         try:
             import common.auth
-            common.auth._get_jwks.cache_clear()
+            common.auth._clear_jwks_cache()
         except Exception:
             pass
         yield
         try:
             import common.auth
-            common.auth._get_jwks.cache_clear()
+            common.auth._clear_jwks_cache()
         except Exception:
             pass
 
@@ -328,7 +328,8 @@ class TestVerifyTokenJWKSHardening:
         (acceptance criterion 3 — JWKS unreachable → bounded failure).
         """
         from common.auth import _get_jwks
-        _get_jwks.cache_clear()
+        from common.auth import _clear_jwks_cache
+        _clear_jwks_cache()
 
         with patch("common.auth.requests.get") as mock_get:
             mock_response = MagicMock()
@@ -354,7 +355,8 @@ class TestVerifyTokenJWKSHardening:
         handing back an empty JWKS and accepting any signed token.
         """
         from common.auth import _get_jwks
-        _get_jwks.cache_clear()
+        from common.auth import _clear_jwks_cache
+        _clear_jwks_cache()
 
         with patch("common.auth.requests.get") as mock_get:
             mock_response = MagicMock()
@@ -389,6 +391,75 @@ class TestVerifyTokenJWKSHardening:
         assert mock_get.call_count == 1, (
             f"expected 1 JWKS fetch (cached for the minute), "
             f"got {mock_get.call_count}"
+        )
+
+    def test_verify_token_single_flight_concurrent_cold_cache(
+            self, monkeypatch):
+        """Acceptance criterion 1, concurrent case: a burst of valid-token
+        requests on a cold JWKS cache must issue exactly ONE upstream
+        fetch (single-flight), not one per caller.
+
+        The original ``@functools.lru_cache`` implementation only
+        de-duplicated *after* the value was in the cache; concurrent
+        misses each fetched independently, so a 40-request burst on a
+        cold cache still produced 40 upstream fetches. This test
+        guards against that regression.
+
+        The artificial 100ms sleep in the mock fetch is what makes the
+        race observable: without it, the GIL serializes everything
+        behind one thread's call and concurrent misses don't actually
+        overlap. With it, the first thread to acquire the lock does
+        the fetch, and the others wait on the lock and reuse the
+        result.
+        """
+        import threading
+        auth = _build_real_env(monkeypatch)
+        private_pem, jwks = _generate_test_jwks()
+        token = _sign_test_token(private_pem, issuer=_TEST_ISSUER)
+
+        fetch_count_lock = threading.Lock()
+        fetch_count = [0]
+
+        def slow_fetch(*args, **kwargs):
+            # Simulate a slow JWKS endpoint so concurrent callers
+            # actually race for the lock instead of serializing
+            # behind the GIL.
+            import time as _time
+            _time.sleep(0.1)
+            with fetch_count_lock:
+                fetch_count[0] += 1
+            response = MagicMock()
+            response.json.return_value = jwks
+            response.raise_for_status = MagicMock()
+            return response
+
+        with patch("common.auth.requests.get", side_effect=slow_fetch), \
+             patch("common.auth.time.time", return_value=1_700_000_000):
+            results = []
+            errors = []
+
+            def call_verify():
+                try:
+                    claims = auth.verify_token(token)
+                    results.append(claims)
+                except Exception as e:
+                    errors.append(e)
+
+            threads = [
+                threading.Thread(target=call_verify) for _ in range(20)
+            ]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+
+        assert not errors, f"verify_token raised during burst: {errors}"
+        assert len(results) == 20, (
+            f"expected 20 successful calls, got {len(results)}"
+        )
+        assert fetch_count[0] == 1, (
+            f"expected exactly 1 JWKS fetch (single-flight on cold "
+            f"cache), got {fetch_count[0]}"
         )
 
     def test_verify_token_refetches_jwks_after_ttl_window(self, monkeypatch):

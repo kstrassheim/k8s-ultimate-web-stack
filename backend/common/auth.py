@@ -4,26 +4,65 @@ from common.config import tfconfig, mock_enabled
 from common.log import logger
 from jose import JWTError, jwt  # Add JWTError import
 from fastapi import HTTPException, status
-import functools
 import requests
+import threading
 import time
-from typing import List
+from typing import Dict, List, Tuple
 
 # Before the verify_token function, initialize the JWKS client
 
 
-# Module-level JWKS cache with TTL. The cache key includes a per-minute
-# bucket (`cache_epoch_minute`), so the upstream JWKS endpoint is fetched
-# at most once per minute per process even under repeated authenticated
-# calls. This both bounds the per-request JWKS work (DoS amplification on a
-# slow upstream) and bounds the worst-case hang time at exactly the JWKS
-# fetch timeout, not at "however long upstream takes to time out".
-@functools.lru_cache(maxsize=8)
+# Module-level JWKS cache + a lock that coalesces concurrent cold-cache
+# misses into a single upstream fetch (single-flight).
+#
+# Two layers of protection against DoS amplification on the JWKS upstream:
+#
+#   1. **Per-minute cache**: ``cache_epoch_minute`` is part of the cache
+#      key, so the upstream is fetched at most once per minute per process
+#      under sequential repeated calls.
+#
+#   2. **Single-flight coalescing**: ``_jwks_cache_lock`` serializes
+#      cold-cache misses, so a burst of concurrent valid-token requests
+#      on a cold cache shares ONE upstream HTTP request rather than
+#      making one fetch per caller. ``functools.lru_cache`` (the original
+#      implementation) only de-duplicates *after* the value is in the
+#      cache — it is not an in-flight request guard, so concurrent misses
+#      each fetch independently.
+#
+# ``cache_epoch_minute`` should be ``int(time.time() // 60)`` so a 60s
+# rolling window gives at most one upstream fetch per minute per process
+# total, not one per request.
+_jwks_cache: Dict[Tuple[str, int], dict] = {}
+_jwks_cache_lock = threading.Lock()
+
+
 def _get_jwks(tenant_id: str, cache_epoch_minute: int):
     jwks_url = f"https://login.microsoftonline.com/{tenant_id}/discovery/v2.0/keys"
-    response = requests.get(jwks_url, timeout=5)
-    response.raise_for_status()
-    return response.json()
+    key = (tenant_id, cache_epoch_minute)
+    with _jwks_cache_lock:
+        cached = _jwks_cache.get(key)
+        if cached is not None:
+            return cached
+        # Cold-cache miss: do the single upstream fetch under the lock so
+        # concurrent callers wait here and share the response instead of
+        # each issuing their own request.
+        response = requests.get(jwks_url, timeout=5)
+        response.raise_for_status()
+        jwks = response.json()
+        # Evict entries from older minute buckets so the cache size stays
+        # bounded. For a single-tenant deployment this collapses to
+        # "drop everything except the current key".
+        stale = [k for k in _jwks_cache if k != key]
+        for stale_key in stale:
+            _jwks_cache.pop(stale_key, None)
+        _jwks_cache[key] = jwks
+        return jwks
+
+
+def _clear_jwks_cache():
+    """Clear the module-level JWKS cache (test helper)."""
+    with _jwks_cache_lock:
+        _jwks_cache.clear()
 
 # define scope to use in the API   
 scopes = [tfconfig["oauth2_permission_scope"]["value"]]
