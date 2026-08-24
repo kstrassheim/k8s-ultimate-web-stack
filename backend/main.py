@@ -102,11 +102,12 @@ async def health():
 async def ready():
     """Readiness probe: 200 once the backend can actually serve traffic.
 
-    Distinct from /health (liveness only proves the Python process is
-    alive; readiness must show that every dependency the app needs to handle
-    a request is reachable. With MongoDB down the API is effectively broken,
-    so kubelet keeps the pod out of the Service endpoints until the DB is
-    back. Unlike liveness, this does NOT restart the pod.
+    Distinct from /health (liveness) on purpose — liveness only proves the
+    Python process is alive; readiness must show that every dependency the
+    app needs to handle a request is reachable. With MongoDB down the API
+    is effectively broken, so we go 503 here and let kubelet keep the pod out
+    of the Service endpoints until the DB is back. Unlike liveness, this
+    does NOT restart the pod.
     """
     if fgl_service.health_check():
         return {"status": "ready"}
@@ -122,7 +123,7 @@ frontend_router = APIRouter()
 
 
 def _enumerate_dist_files(root: Path) -> dict:
-    """At startup, walk dist/ and map each relative path string to an absolute
+    """At startup, walk dist/ and map each relative path string to its absolute
     Path. The handler only serves files from this map — turning user input
     into a dict key lookup rather than a filesystem path construction.
     This is the canonical whitelist sanitizer for path-traversal."""
