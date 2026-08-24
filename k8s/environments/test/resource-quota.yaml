@@ -1,0 +1,44 @@
+# ==============================
+# TEST namespace ResourceQuota.
+#
+# Closes issue #109: see k8s/environments/dev/resource-quota.yaml for the full
+# rationale and the baseline calculation. This file is the TEST-sized version
+# of the same envelope.
+#
+# TEST sizing: ~3x steady-state requests, ~1.5x steady-state limits. Test
+# mirrors prod more closely than dev does (release candidates land here), so
+# it gets more headroom than dev but less than prod.
+#   requests.cpu     = 1.5   (= 1500m = 350m * ~4.3; comfortably above steady + backup)
+#   requests.memory  = 3Gi   (= 768Mi * 4)
+#   limits.cpu       = 6     (= 2x steady-state limits)
+#   limits.memory    = 6Gi   (= 2.67x steady-state limits)
+#   pods             = 20
+#   persistentvolumeclaims = 10
+#   requests.storage = 30Gi  (current usage = 12Gi; room for additional test volumes)
+#   services         = 30
+#   secrets          = 50
+#   configmaps       = 50
+#   serviceaccounts  = 30
+#
+# prod has the largest envelope — see k8s/environments/prod/resource-quota.yaml
+# for the prod-specific sizing and the rationale.
+# ==============================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: test-quota
+  labels:
+    app.kubernetes.io/managed-by: argocd
+spec:
+  hard:
+    requests.cpu: "1.5"
+    requests.memory: 3Gi
+    limits.cpu: "6"
+    limits.memory: 6Gi
+    pods: "20"
+    persistentvolumeclaims: "10"
+    requests.storage: 30Gi
+    services: "30"
+    secrets: "50"
+    configmaps: "50"
+    serviceaccounts: "30"

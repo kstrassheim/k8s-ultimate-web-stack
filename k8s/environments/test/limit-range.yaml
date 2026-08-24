@@ -1,0 +1,43 @@
+# ==============================
+# TEST namespace LimitRange.
+#
+# Closes issue #109: same shape as k8s/environments/dev/limit-range.yaml, sized
+# for the test envelope. Defaults and per-container max are identical to dev
+# (workloads are identical; only the namespace quota envelope differs between
+# envs), so the test namespace gets the same per-container guard rails as dev.
+#
+# See k8s/environments/test/resource-quota.yaml for the test-specific envelope
+# sizing and the headroom factor.
+# ==============================
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: test-defaults
+  labels:
+    app.kubernetes.io/managed-by: argocd
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 10m
+        memory: 16Mi
+    - type: PersistentVolumeClaim
+      default:
+        storage: 1Gi
+      # Max 10Gi: must accommodate the existing mongo-backup-data PVC
+      # (10Gi, requested in k8s/mongodb/backup-cronjob.yaml). Test mirrors
+      # dev on this; only prod gets a higher per-PVC ceiling to match its
+      # larger requests.storage quota (100Gi vs 20-30Gi in dev/test).
+      max:
+        storage: 10Gi
+      min:
+        storage: 100Mi

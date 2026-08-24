@@ -1,0 +1,49 @@
+# ==============================
+# PROD namespace ResourceQuota.
+#
+# Closes issue #109: see k8s/environments/dev/resource-quota.yaml for the full
+# rationale and the baseline calculation. This file is the PROD-sized version
+# of the same envelope — the largest of the three envs by design.
+#
+# PROD sizing: ~5x steady-state requests + generous limits and storage. Prod
+# is the only env that should absorb a 2x traffic spike or a horizontally-scaled
+# rollout, and the quota must NOT block the next rollout (issue's acceptance
+# criterion #4). The numbers below are sized so that even doubling the current
+# web Deployment (2 replicas) and adding the nightly backup pod simultaneously
+# still leaves headroom for one more moderately-sized workload.
+#   requests.cpu     = 2     (= 2000m = 350m * ~5.7)
+#   requests.memory  = 4Gi   (= 768Mi * ~5.3)
+#   limits.cpu       = 10    (= 5x steady-state limits; room for 5 bursty pods)
+#   limits.memory    = 10Gi  (= 6.7x steady-state limits)
+#   pods             = 30    (more headroom than dev/test = 20; room for
+#                             scaling web to 2-3 replicas + sidecars)
+#   persistentvolumeclaims = 20
+#   requests.storage = 100Gi (current usage = 12Gi; room for several large PVCs
+#                             at the 20Gi per-PVC max)
+#   services         = 50
+#   secrets          = 100
+#   configmaps       = 100
+#   serviceaccounts  = 50
+#
+# The headroom factor is the only variable between the three files
+# (dev ~2x, test ~3x, prod ~5x); everything else follows the same shape.
+# ==============================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: prod-quota
+  labels:
+    app.kubernetes.io/managed-by: argocd
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: 4Gi
+    limits.cpu: "10"
+    limits.memory: 10Gi
+    pods: "30"
+    persistentvolumeclaims: "20"
+    requests.storage: 100Gi
+    services: "50"
+    secrets: "100"
+    configmaps: "100"
+    serviceaccounts: "50"
