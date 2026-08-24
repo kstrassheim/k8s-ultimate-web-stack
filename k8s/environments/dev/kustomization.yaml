@@ -14,6 +14,11 @@ labels:
 resources:
   - ../base
   - ingress.yaml
+  # Per-namespace defaults + envelope (closes issue #109). Both files set the
+  # `namespace:` above; LimitRange applies per-container defaults and a max,
+  # ResourceQuota caps the total the namespace can consume.
+  - limit-range.yaml
+  - resource-quota.yaml
   # DEV ONLY. Read-only visibility for the claw-code-local bot so it can
   # diagnose a broken environment rather than guess from the repo. Scoped to
   # dev deliberately: this is where the bot's tester points, and where a

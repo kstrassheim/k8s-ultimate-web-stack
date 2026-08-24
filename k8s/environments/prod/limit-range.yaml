@@ -1,0 +1,44 @@
+# ==============================
+# PROD namespace LimitRange.
+#
+# Closes issue #109: same shape as k8s/environments/dev/limit-range.yaml, sized
+# for the prod envelope. Defaults are identical to dev/test (workloads are
+# identical; only the namespace quota envelope differs between envs).
+#
+# Per-container max is raised slightly (4 CPU / 4Gi) compared to dev/test
+# (2 / 2Gi) because prod should allow a heavier workload to land — anything
+# the operator is willing to schedule in prod should at least fit through
+# the LimitRange guard. The namespace ResourceQuota below (which sums across
+# all containers) remains the real backstop.
+#
+# See k8s/environments/prod/resource-quota.yaml for the prod-specific envelope
+# sizing and the headroom factor.
+# ==============================
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: prod-defaults
+  labels:
+    app.kubernetes.io/managed-by: argocd
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "4"
+        memory: 4Gi
+      min:
+        cpu: 10m
+        memory: 16Mi
+    - type: PersistentVolumeClaim
+      default:
+        storage: 1Gi
+      max:
+        storage: 20Gi
+      min:
+        storage: 100Mi

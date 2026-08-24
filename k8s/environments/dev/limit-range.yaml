@@ -1,0 +1,63 @@
+# ==============================
+# DEV namespace LimitRange.
+#
+# Closes issue #109: supply default requests / limits for containers and
+# PersistentVolumeClaims that declare none, plus a per-container maximum so a
+# single new manifest cannot blow past the namespace quota.
+#
+# Sizing rationale (see k8s/environments/dev/resource-quota.yaml for the
+# matching namespace envelope):
+#   - Steady-state workloads in this env:
+#       web       (Deployment,  1 replica) requests 100m / 256Mi, limits 1 / 512Mi
+#       mongodb   (StatefulSet, 1 replica) requests 250m / 512Mi, limits 1 / 1Gi
+#     Sum of steady-state requests: 350m CPU, 768Mi memory.
+#   - The mongodb `fix-data-ownership` initContainer declares NO resources.
+#     Without this LimitRange, that init container is unbounded and the
+#     ResourceQuota below does not actually count it. The default request
+#     below closes that gap (the init container's runtime usage is tiny —
+#     a one-shot `find | chown` over /data/db — so 64Mi / 50m is generous).
+#   - mongo-backup (CronJob, runs nightly at 03:00 UTC) requests 100m / 256Mi,
+#     limits 1 / 1Gi. It is not always scheduled, but the quota must accommodate
+#     it when it runs, and the LimitRange per-container max of 2 CPU / 2Gi must
+#     still allow backup pods to land (1 / 1Gi fits).
+#   - Per-container max (2 CPU / 2Gi) is set above the largest declared limit
+#     (1 / 1Gi for backup) so existing workloads still schedule, but tight
+#     enough to flag a manifest that asks for, say, 4Gi of memory.
+#
+# Defaults are deliberately small (50m / 64Mi request, 500m / 256Mi limit).
+# Workloads that need more should declare it explicitly, as web / mongodb /
+# mongo-backup already do. The defaults only catch the "forgot to set anything"
+# case described in the issue.
+# ==============================
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: dev-defaults
+  labels:
+    app.kubernetes.io/managed-by: argocd
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: 500m
+        memory: 256Mi
+      defaultRequest:
+        cpu: 50m
+        memory: 64Mi
+      max:
+        cpu: "2"
+        memory: 2Gi
+      min:
+        cpu: 10m
+        memory: 16Mi
+    - type: PersistentVolumeClaim
+      default:
+        storage: 1Gi
+      # Max 10Gi: must accommodate the existing mongo-backup-data PVC
+      # (10Gi, requested in k8s/mongodb/backup-cronjob.yaml). Bumping above
+      # this would let a single new PVC consume half the dev namespace's
+      # 20Gi requests.storage quota, so the wider envelope stays in prod.
+      max:
+        storage: 10Gi
+      min:
+        storage: 100Mi

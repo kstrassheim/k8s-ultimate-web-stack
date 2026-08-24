@@ -1,0 +1,60 @@
+# ==============================
+# DEV namespace ResourceQuota.
+#
+# Closes issue #109: cap the total resources the dev namespace can consume
+# so the next manifest that forgets its requests/limits cannot starve the
+# rest of the cluster.
+#
+# Sizing — the "real usage" baseline comes from the manifests in this repo
+# (we cannot read `kubectl top pods` from this build agent's narrow RBAC,
+# but the manifests ARE the deployed reality — every workload scheduled
+# in this env is declared here, and each declares its requests/limits).
+#
+# Per-env overhead (all three envs are identical at the workload level;
+# the only difference is the env name injected by the patch overlays):
+#   web           requests 100m / 256Mi    limits 1 / 512Mi
+#   mongodb       requests 250m / 512Mi    limits 1 / 1Gi
+#   mongo-backup  requests 100m / 256Mi    limits 1 / 1Gi  (CronJob, brief)
+#
+# Steady-state sum (web + mongodb):   350m / 768Mi requests,   2 / 1.5Gi limits
+# With backup running simultaneously: 450m / ~1Gi requests,    3 / 2.5Gi limits
+#
+# DEV sizing: 2x steady-state requests + 2x storage headroom. DEV is
+# where new manifests land first and where wasted resources are cheapest,
+# so the envelope stays tight. Headroom here means "room for one more
+# small service and the nightly backup pod to coexist with steady state".
+#   requests.cpu     = 1     (= 1000m = 350m * ~2.85; covers steady + backup)
+#   requests.memory  = 2Gi   (= 768Mi * ~2.67; covers steady + backup)
+#   limits.cpu       = 4     (= 2x steady-state limits)
+#   limits.memory    = 4Gi   (= 2.67x steady-state limits)
+#   pods             = 20    (room for sidecars, debugging pods, scaling tests)
+#   persistentvolumeclaims = 10
+#   requests.storage = 20Gi  (current usage = 12Gi: mongodb-data 2Gi + mongo-backup-data 10Gi)
+#   services         = 30
+#   secrets          = 50
+#   configmaps       = 50
+#   serviceaccounts  = 30
+#
+# tests/prod have larger envelopes — see those files for the per-env
+# headroom factor and the rationale. The headroom factor is the only
+# variable between the three files; everything else follows the same shape.
+# ==============================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: dev-quota
+  labels:
+    app.kubernetes.io/managed-by: argocd
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 2Gi
+    limits.cpu: "4"
+    limits.memory: 4Gi
+    pods: "20"
+    persistentvolumeclaims: "10"
+    requests.storage: 20Gi
+    services: "30"
+    secrets: "50"
+    configmaps: "50"
+    serviceaccounts: "30"

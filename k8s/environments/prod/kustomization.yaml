@@ -16,6 +16,9 @@ labels:
 resources:
   - ../base
   - ingress.yaml
+  # Per-namespace defaults + envelope (closes issue #109).
+  - limit-range.yaml
+  - resource-quota.yaml
 
 images:
   - name: mainpi.local:5000/ultimate-web-stack/web
