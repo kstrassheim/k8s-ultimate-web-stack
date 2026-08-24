@@ -22,6 +22,26 @@ app = FastAPI()
 # CORS — origins from terraform config
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Add defensive browser headers to every HTTP response.
+
+    Keep this policy at the application boundary as well as at the ingress so
+    a change to controller defaults cannot silently weaken it.  ``setdefault``
+    also lets a more specific proxy-owned value win if one is already present.
+    """
+    response = await call_next(request)
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com; frame-ancestors 'none'",
+    )
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
+
 # OpenTelemetry instrumentation
 try:
     from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -85,7 +105,7 @@ async def ready():
     Distinct from /health (liveness) on purpose — liveness only proves the
     Python process is alive; readiness must show that every dependency the
     app needs to handle a request is reachable. With MongoDB down the API
-    is effectively broken, so we go 503 here and let k8s keep the pod out
+    is effectively broken, so we go 503 here and let kubelet keep the pod out
     of the Service endpoints until the DB is back. Unlike liveness, this
     does NOT restart the pod.
     """
