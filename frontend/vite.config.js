@@ -144,12 +144,25 @@ const getAliases = () => {
 export default defineConfig({
   plugins: [
     react(),
-    // Add Istanbul plugin for code coverage
+    // Add Istanbul plugin for code coverage.
+    //
+    // Two flags that both have to be set to make the dev server instrumented
+    // on this pod:
+    //   - requireEnv: false  → don't gate on VITE_COVERAGE/CYPRESS_COVERAGE,
+    //     normal dev usage pays a small transform cost but the same code
+    //     paths are exercised whether or not Cypress is collecting.
+    //   - checkProd: false   → do NOT skip instrumentation when NODE_ENV is
+    //     "production". The container this pod runs in inherits NODE_ENV=
+    //     production from the system; without this flag the dev server would
+    //     silently look like a production build and istanbul would no-op.
+    //     That is why no e2e coverage was collected previously (issue #136):
+    //     the plugin was loading but never transforming anything.
     istanbul({
       include: 'src/*',
       exclude: ['node_modules', 'test/'],
       extension: ['.js', '.jsx'],
-      requireEnv: true,
+      requireEnv: false,
+      checkProd: false,
     })
   ],
   // Relative asset URLs so a single build works at any mount point: the
@@ -163,8 +176,8 @@ export default defineConfig({
   define: {
     __MOCK__: JSON.stringify(isMockEnabled),
     // define another production uri for deployment then local
-    __PROD_URI__: isDeployment ? JSON.stringify(tfconfig.web_url.value) : JSON.stringify('http://localhost:8000'),
-    __PROD_SOCKET_URI__: isDeployment ? JSON.stringify(tfconfig.web_url.value.replace('https://', 'wss://')): JSON.stringify('ws://localhost:8000')
+    __PROD_URI__: isDeployment ? JSON.stringify(tfconfig.web_url.value) : JSON.stringify(process.env.E2E_BACKEND_URI || 'http://localhost:8000'),
+    __PROD_SOCKET_URI__: isDeployment ? JSON.stringify(tfconfig.web_url.value.replace('https://', 'wss://')): JSON.stringify(process.env.E2E_SOCKET_URI || 'ws://localhost:8000')
   },
   build: {
     outDir: '../backend/dist',

@@ -12,8 +12,11 @@
 
 import 'cypress-wait-until';
 import './msalMock';
-// NOTE: @cypress/code-coverage support is registered via cypress.config.js setupNodeEvents.
-// Do NOT import '@cypress/code-coverage/support' here as that causes duplicate registration.
+// Browser-side coverage hooks: read window.__coverage__ from the app iframe
+// after each test and forward it to the node-side tasks registered by
+// codeCoverageTask(on, config) in cypress.config.js. The two sides do not
+// overlap — without this import, coverage is collected by nothing.
+import '@cypress/code-coverage/support';
 
 // Example of global behavior modification
 Cypress.on('uncaught:exception', (err, runnable) => {
