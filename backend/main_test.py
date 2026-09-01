@@ -169,6 +169,84 @@ class TestMainModule:
         assert "no-store" in response.headers.get("cache-control", "")
         self._assert_security_headers(response, "text/html")
 
+    def test_missing_static_asset_returns_404_not_the_spa_shell(self):
+        """Issue #141: a request that names a static asset must 404 when the
+        asset is missing. Answering it with the SPA shell at HTTP 200 turns a
+        broken reference into an invisible failure — which is exactly how the
+        web manifest's wrong icon paths went unnoticed: Edge asked for a PNG
+        and was handed HTML, with nothing anywhere reporting an error."""
+        with patch("main._index_text", self._INDEX):
+            for url in ("/android-chrome-192x192.png",
+                        "/public/android-chrome-192x192.png",
+                        "/site.webmanifest",
+                        "/assets/missing.js",
+                        "/assets/missing.css",
+                        "/favicon.ico",
+                        "/fonts/missing.woff2"):
+                response = client.get(url)
+                assert response.status_code == 404, (
+                    f"{url} must be 404 when the asset is missing, "
+                    f"got {response.status_code}"
+                )
+                assert '<div id="root">' not in response.text
+
+    def test_asset_extension_check_is_case_insensitive(self):
+        """Issue #141: uppercase extensions name assets just as much as
+        lowercase ones, so /LOGO.PNG must not slip into the SPA fallback."""
+        with patch("main._index_text", self._INDEX):
+            assert client.get("/LOGO.PNG").status_code == 404
+
+    def test_spa_routes_and_real_assets_are_unaffected(self, served_assets):
+        """Issue #141 (positive control): the 404 rule only fires for a path
+        that names an asset AND is absent from the dist whitelist. Real assets
+        and extensionless client-side routes keep working."""
+        with patch("main._index_text", self._INDEX):
+            # Extensionless SPA routes still get the base-injected shell.
+            for route in ("/", "/dashboard", "/chat", "/experiments"):
+                response = client.get(route)
+                assert response.status_code == 200, f"{route} should serve the SPA"
+                assert '<div id="root">' in response.text
+
+            # A route segment containing a dot that is not a known asset
+            # extension is still a route, not an asset.
+            response = client.get("/users/jane.doe")
+            assert response.status_code == 200
+            assert '<div id="root">' in response.text
+
+        # A whitelisted asset is still served (served_assets fixture).
+        with patch("main.FileResponse") as mock_file_response:
+            mock_file_response.return_value = "FILE"
+            assert client.get("/app.js").status_code == 200
+
+    def test_webmanifest_is_served_with_the_manifest_media_type(self, tmp_path):
+        """Issue #141: an install reads site.webmanifest, so it must arrive as
+        application/manifest+json rather than whatever the filename guesser
+        settles on."""
+        manifest_file = tmp_path / "site.webmanifest"
+        manifest_file.write_text('{"id": "./"}')
+
+        with patch.dict("main._dist_files",
+                        {"site.webmanifest": manifest_file}, clear=False):
+            response = client.get("/site.webmanifest")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("application/manifest+json")
+        assert response.json()["id"] == "./"
+
+    def test_icon_is_served_as_a_real_image(self, tmp_path):
+        """Issue #141: the icon paths in the manifest pointed at /public/…
+        which is never emitted, and the SPA fallback answered with HTML. A
+        real icon must come back typed as an image."""
+        icon = tmp_path / "android-chrome-192x192.png"
+        icon.write_bytes(b"\x89PNG\r\n\x1a\n")
+
+        with patch.dict("main._dist_files",
+                        {"android-chrome-192x192.png": icon}, clear=False):
+            response = client.get("/android-chrome-192x192.png")
+
+        assert response.status_code == 200
+        assert response.headers["content-type"].startswith("image/png")
+
     def test_index_injects_root_base_without_prefix(self):
         """At a domain root (no X-Forwarded-Prefix, e.g. via the Cloudflare
         tunnel) the injected base is '/' and precedes the relative assets."""

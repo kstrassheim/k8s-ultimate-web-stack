@@ -2,7 +2,7 @@ import psutil
 from fastapi import FastAPI, APIRouter, Request, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import datetime
 import json
 import re
@@ -169,6 +169,46 @@ def _render_index(base: str) -> HTMLResponse:
     return HTMLResponse(html, headers=_NO_STORE)
 
 
+# Extensions that name a static asset rather than a client-side route (issue
+# #141). A miss on one of these is a broken reference and must surface as 404
+# instead of being papered over with the SPA shell. SPA routes ("/dashboard",
+# "/chat") carry no suffix and are unaffected.
+#
+# ``.html`` is deliberately absent: index.html is a real file and is served
+# through the base-injecting renderer below, not as a plain asset.
+NON_SPA_SUFFIXES = frozenset({
+    ".js", ".mjs", ".css", ".map", ".json", ".webmanifest",
+    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".webp", ".avif",
+    ".woff", ".woff2", ".ttf", ".otf", ".eot", ".txt", ".xml", ".wasm",
+})
+
+# Content types for the assets the Vite build emits. Leaving these to
+# Starlette's filename guesser worked, but spelling them out keeps the served
+# type auditable in one place and pins the two that matter for a PWA install:
+# a manifest served as anything but application/manifest+json, and icons that
+# must arrive as real images (issue #141).
+_STATIC_MEDIA_TYPES = {
+    ".js": "application/javascript",
+    ".mjs": "application/javascript",
+    ".css": "text/css",
+    ".html": "text/html",
+    ".json": "application/json",
+    ".map": "application/json",
+    ".webmanifest": "application/manifest+json",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".ico": "image/vnd.microsoft.icon",
+    ".woff": "font/woff",
+    ".woff2": "font/woff2",
+    ".ttf": "font/ttf",
+    ".otf": "font/otf",
+}
+
+
 @frontend_router.get("/{path:path}")
 async def frontend_handler(path: str, request: Request):
     if path.startswith("api/") or path.startswith("future-gadget-lab/"):
@@ -179,20 +219,22 @@ async def frontend_handler(path: str, request: Request):
     # trusted filesystem enumeration — not from user input.
     fp = _dist_files.get(path)
 
+    # Only real SPA routes fall back to index.html. A request that names a
+    # static asset must 404 when the asset is missing: answering it with the
+    # HTML shell at HTTP 200 turns a broken reference into a silent, invisible
+    # failure. That is how the manifest's wrong icon paths
+    # ("public/android-chrome-192x192.png", pointing at a public/ subdirectory
+    # Vite never emits) went unnoticed — Edge asked for a PNG and got HTML,
+    # with no error anywhere to show for it (issue #141).
+    if fp is None and path and PurePosixPath(path).suffix.lower() in NON_SPA_SUFFIXES:
+        raise HTTPException(status_code=404, detail="Not found")
+
     # Unknown path = SPA fallback, and index.html itself, both get the runtime
     # base injected and must not be cached (or browsers keep a stale bundle).
     if fp is None or fp == _index_html:
         return _render_index(_resolve_base(request))
 
-    media_type = None
-    if path.endswith(".js"):
-        media_type = "application/javascript"
-    elif path.endswith(".css"):
-        media_type = "text/css"
-    elif path.endswith(".html"):
-        media_type = "text/html"
-    elif path.endswith(".json"):
-        media_type = "application/json"
+    media_type = _STATIC_MEDIA_TYPES.get(PurePosixPath(path).suffix.lower())
 
     return FileResponse(fp, media_type=media_type)
 

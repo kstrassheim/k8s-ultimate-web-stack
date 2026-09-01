@@ -80,6 +80,9 @@ const generateWebManifest = () => {
     } else {
       // Default template if file doesn't exist
       manifest = {
+        "id": "./",
+        "start_url": "./",
+        "scope": "./",
         "icons": [
           {
             "src": "android-chrome-192x192.png",
@@ -101,7 +104,42 @@ const generateWebManifest = () => {
     // Update name fields with app name from terraform config
     manifest.name = appName;
     manifest.short_name = appName;
-    
+
+    // Pin the app identity (issue #141). Left unset, all three are derived at
+    // install time from whatever URL the user happened to be on when they hit
+    // "Install": `start_url` defaults to that document URL *including* any
+    // ?code=/#state= left over from an Entra sign-in, `scope` to its
+    // containing directory, and the install id to `start_url`. Edge tests
+    // every navigation against `scope` to decide whether it stays inside the
+    // app window, so leaving it implicit lets two users on the same build get
+    // different behaviour — one of them having in-app links open a fresh
+    // browser window outside the installed app.
+    //
+    // The values are MOUNT-RELATIVE ("./"), not "/". This app is served at two
+    // public bases at once: the domain root through the Cloudflare tunnel, and
+    // an nginx subpath resolved per-request from `x-forwarded-prefix` by
+    // `_resolve_base()` in backend/main.py. A literal "/" would put the whole
+    // subpath deployment out of scope, so *every* in-app navigation there
+    // would open in the browser. "./" is resolved by the browser against the
+    // manifest's own URL, giving "/" at the root mount and
+    // "/<prefix>/" behind the ingress — with correctly distinct install
+    // identities per mount and no server-side rendering needed.
+    manifest.id = './';
+    manifest.start_url = './';
+    manifest.scope = './';
+
+    // Icons are resolved against the manifest URL, and Vite flattens public/
+    // into the dist root — so a "public/…" prefix here points at a public/
+    // subdirectory of the mount, where nothing is served. The catch-all SPA
+    // route then answered that miss with index.html at HTTP 200, handing Edge
+    // HTML where it expects a PNG instead of an honest 404 (see
+    // NON_SPA_SUFFIXES in backend/main.py, which now makes that miss visible).
+    // Bare filenames stay mount-relative for the same reason as above.
+    manifest.icons = (manifest.icons || []).map(icon => ({
+      ...icon,
+      src: String(icon.src).replace(/^\/?(public\/)?/, '')
+    }));
+
     // Atomic write prevents another process from reading a partial write
     atomicWriteJson(manifestPath, manifest);
     console.log(`Generated site.webmanifest with app name: "${appName}"`);
