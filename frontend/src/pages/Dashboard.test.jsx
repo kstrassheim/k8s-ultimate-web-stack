@@ -5,6 +5,7 @@ import { useMsal } from '@azure/msal-react';
 import Dashboard from './Dashboard';
 import { getUserData } from '@/api/api';
 import { getAllGroups } from '@/api/graphApi';
+import { GraphConsentRequiredError } from '@/auth/entraAuth';
 import { 
   getWorldlineStatus,
   getWorldlineHistory,
@@ -86,7 +87,9 @@ describe('Dashboard Component', () => {
     expect(getUserData).toHaveBeenCalledTimes(1);
     expect(getUserData).toHaveBeenCalledWith(mockMsalInstance);
     expect(getAllGroups).toHaveBeenCalledTimes(1);
-    expect(getAllGroups).toHaveBeenCalledWith(mockMsalInstance);
+    // Issue #141: the mount-time fetch must stay non-interactive — a popup
+    // from this effect is what escaped the installed PWA's window.
+    expect(getAllGroups).toHaveBeenCalledWith(mockMsalInstance, { interactive: false });
     
     // Verify tracking was called
     expect(appInsights.trackEvent).toHaveBeenCalledWith({ name: 'Home - Fetch data started' });
@@ -192,5 +195,81 @@ describe('Dashboard Component', () => {
     const separatorIndex = Array.from(dashboardPage.children).indexOf(separator);
     const homeContainerIndex = Array.from(dashboardPage.children).indexOf(homeContainer);
     expect(separatorIndex).toBeLessThan(homeContainerIndex);
+  });
+
+  describe('missing Graph consent (issue #141)', () => {
+    const consentError = () => new GraphConsentRequiredError(['User.Read', 'Group.Read.All']);
+
+    beforeEach(() => {
+      getUserData.mockResolvedValue({ message: 'API response' });
+      getWorldlineStatus.mockResolvedValue({});
+      getWorldlineHistory.mockResolvedValue([]);
+      getDivergenceReadings.mockResolvedValue([]);
+    });
+
+    test('degrades to a Grant access button instead of failing the page', async () => {
+      // Before the fix a user without Group.Read.All consent got a popup per
+      // navigation; the page itself also failed, because the groups fetch sat
+      // inside the same Promise.all as the app's own API call.
+      getAllGroups.mockRejectedValue(consentError());
+
+      render(<Dashboard />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('groups-consent-required')).toBeInTheDocument();
+      });
+
+      // The rest of the dashboard still loaded.
+      expect(screen.getByTestId('api-response-card')).toBeInTheDocument();
+      expect(screen.queryByTestId('error-message')).not.toBeInTheDocument();
+      expect(notyfService.error).not.toHaveBeenCalled();
+    });
+
+    test('the Grant access button is the only path that may open a popup', async () => {
+      getAllGroups.mockRejectedValueOnce(consentError());
+
+      render(<Dashboard />);
+      await waitFor(() => {
+        expect(screen.getByTestId('grant-groups-access-button')).toBeInTheDocument();
+      });
+
+      // Mount-time call was non-interactive.
+      expect(getAllGroups).toHaveBeenNthCalledWith(
+        1,
+        mockMsalInstance,
+        expect.objectContaining({ interactive: false }),
+      );
+
+      getAllGroups.mockResolvedValueOnce([{ id: '1', displayName: 'Granted Group' }]);
+      fireEvent.click(screen.getByTestId('grant-groups-access-button'));
+
+      // The click is a real user gesture, so this one may prompt.
+      await waitFor(() => {
+        expect(getAllGroups).toHaveBeenNthCalledWith(
+          2,
+          mockMsalInstance,
+          expect.objectContaining({ interactive: true }),
+        );
+      });
+
+      // A successful grant replaces the prompt with the groups list.
+      await waitFor(() => {
+        expect(screen.queryByTestId('groups-consent-required')).not.toBeInTheDocument();
+      });
+    });
+
+    test('a non-consent Graph failure is still reported as an error', async () => {
+      // The degraded path is only for consent. A genuine Graph outage must
+      // not be silently rendered as "you need to grant access".
+      getAllGroups.mockRejectedValue(new Error('Graph API error (503)'));
+
+      render(<Dashboard />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('error-message')).toBeInTheDocument();
+      });
+      expect(screen.queryByTestId('groups-consent-required')).not.toBeInTheDocument();
+      expect(notyfService.error).toHaveBeenCalled();
+    });
   });
 });

@@ -27,12 +27,21 @@ export const getProfilePhoto = window.getProfilePhoto ? window.getProfilePhoto :
     }
   };
   
-  export const getAllGroups = window.getAllGroups ? window.getAllGroups : async (instance) => {
+  // `options.interactive` is forwarded to retrieveTokenForGraph and must only
+  // be set from a user gesture (the "Grant access" button on the dashboard).
+  // The mount-time fetch leaves it false so a user without Group.Read.All
+  // consent gets a rejected promise instead of a popup window per navigation
+  // (issue #141).
+  export const getAllGroups = window.getAllGroups ? window.getAllGroups : async (instance, options) => {
     try {
       appInsights.trackEvent({ name: 'Api Call - getAllGroups (Graph API)' });
       
       // Request token with Group.Read.All scope for Graph API
-      const accessToken = await retrieveTokenForGraph(instance, ['Group.Read.All']);
+      const accessToken = await retrieveTokenForGraph(
+        instance,
+        ['Group.Read.All'],
+        { interactive: options?.interactive === true },
+      );
       
       // Call Microsoft Graph API directly
       const response = await fetch('https://graph.microsoft.com/v1.0/groups', {
