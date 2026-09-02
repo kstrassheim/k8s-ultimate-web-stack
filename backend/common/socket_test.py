@@ -442,6 +442,264 @@ async def test_broadcast_server_with_custom_username(manager, monkeypatch):
         assert sent["server_initiated"] is True
 
 @pytest.mark.asyncio
+async def test_connect_accepts_and_appends(manager, fake_websocket):
+    """`connect()` is the unauthenticated entry point: it accepts and
+    registers the socket without any auth-frame check. Used for callers
+    that do not want role-based gating (e.g. the chat manager has
+    receiver_roles=[], sender_roles=[])."""
+    assert manager.active_connections == []
+    await manager.connect(fake_websocket)
+    assert fake_websocket.accepted
+    assert fake_websocket in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_disconnect_removes_websocket(manager, fake_websocket):
+    """`disconnect()` removes the socket from active_connections.
+    Round-trips with `connect()` so the line is exercised."""
+    await manager.connect(fake_websocket)
+    assert fake_websocket in manager.active_connections
+    manager.disconnect(fake_websocket)
+    assert fake_websocket not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_auth_connect_rejects_when_verify_returns_empty_claims(
+        manager, monkeypatch, fake_websocket):
+    """If `verify_token` succeeds but yields falsy claims (an empty
+    dict, None, etc.), the manager closes the socket with code 1008
+    and never registers it."""
+    fake_websocket.received_json = {"token": "anything"}
+    monkeypatch.setattr("common.socket.verify_token", lambda *a, **k: None)
+    await manager.auth_connect(fake_websocket)
+    assert fake_websocket.closed is not None
+    code, reason = fake_websocket.closed
+    assert code == 1008
+    assert "Invalid authentication token" in reason
+    assert fake_websocket not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_auth_connect_handles_http_403_role_failure(
+        manager, monkeypatch, fake_websocket):
+    """HTTP 403 from `verify_token` (the user authenticated but lacks
+    the receiver role) is a separate close reason — distinct from a
+    plain auth failure. Code is still 1008."""
+    from fastapi import HTTPException, status as http_status
+    fake_websocket.received_json = {"token": "anything"}
+
+    def raise_forbidden(*a, **k):
+        raise HTTPException(
+            status_code=http_status.HTTP_403_FORBIDDEN,
+            detail="Insufficient role",
+        )
+
+    monkeypatch.setattr("common.socket.verify_token", raise_forbidden)
+    await manager.auth_connect(fake_websocket)
+    assert fake_websocket.closed is not None
+    code, reason = fake_websocket.closed
+    assert code == 1008
+    assert "Insufficient permissions" in reason
+    assert fake_websocket not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_auth_connect_handles_non_403_http_exception(
+        manager, monkeypatch, fake_websocket):
+    """An HTTPException with a status other than 403 (e.g. 401 from a
+    bad signature) surfaces its own detail string in the close frame.
+    """
+    from fastapi import HTTPException, status as http_status
+    fake_websocket.received_json = {"token": "anything"}
+
+    def raise_401(*a, **k):
+        raise HTTPException(
+            status_code=http_status.HTTP_401_UNAUTHORIZED,
+            detail="Bad token",
+        )
+
+    monkeypatch.setattr("common.socket.verify_token", raise_401)
+    await manager.auth_connect(fake_websocket)
+    code, reason = fake_websocket.closed
+    assert code == 1008
+    assert reason == "Bad token"
+    assert fake_websocket not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_auth_connect_handles_jwt_error(
+        manager, monkeypatch, fake_websocket):
+    """`JWTError` from inside `verify_token` (malformed token) is
+    caught as a separate case — close code is 1008."""
+    from jose import JWTError
+    fake_websocket.received_json = {"token": "anything"}
+
+    def raise_jwt(*a, **k):
+        raise JWTError("malformed")
+
+    monkeypatch.setattr("common.socket.verify_token", raise_jwt)
+    await manager.auth_connect(fake_websocket)
+    code, reason = fake_websocket.closed
+    assert code == 1008
+    assert "Invalid authentication token" in reason
+    assert fake_websocket not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_auth_connect_handles_unexpected_exception(
+        manager, monkeypatch, fake_websocket):
+    """Anything that isn't an HTTPException or JWTError surfaces as a
+    generic 1011 'Authentication server error' close frame (distinct
+    from the 1008 'bad auth' frame — this signals an internal fault).
+    """
+    fake_websocket.received_json = {"token": "anything"}
+
+    def raise_unexpected(*a, **k):
+        raise RuntimeError("kaboom")
+
+    monkeypatch.setattr("common.socket.verify_token", raise_unexpected)
+    await manager.auth_connect(fake_websocket)
+    code, reason = fake_websocket.closed
+    assert code == 1011
+    assert "Authentication server error" in reason
+    assert fake_websocket not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_auth_connect_rejects_token_missing_sub_claim(
+        manager, monkeypatch, fake_websocket):
+    """A token whose claims parse cleanly but lack a `sub` claim is
+    rejected with 1008 'Invalid token claims'. Pins the sub-claim
+    requirement."""
+    fake_websocket.received_json = {"token": "anything"}
+
+    def return_claims(*a, **k):
+        # Valid JWT but no `sub`.
+        return {"name": "No Sub", "roles": ["User"]}
+
+    monkeypatch.setattr("common.socket.verify_token", return_claims)
+    await manager.auth_connect(fake_websocket)
+    code, reason = fake_websocket.closed
+    assert code == 1008
+    assert "Invalid token claims" in reason
+    assert fake_websocket not in manager.active_connections
+
+
+@pytest.mark.asyncio
+async def test_validate_sender_roles_allows_when_unconfigured(manager):
+    """When `sender_roles` is empty, every sender is allowed — this
+    is the default behaviour for open chat. `_validate_sender_roles`
+    must short-circuit to True in that case (without inspecting the
+    websocket state)."""
+    assert manager.sender_roles == []
+    assert manager._validate_sender_roles(None) is True
+
+
+@pytest.mark.asyncio
+async def test_validate_sender_roles_any_branch(manager, fake_websocket):
+    """The ANY branch of role enforcement: a sender with one of the
+    required roles is allowed."""
+    manager.sender_roles = ["Admin", "User"]
+    fake_websocket.state.user = {"roles": ["User"]}
+    assert manager._validate_sender_roles(fake_websocket) is True
+
+
+@pytest.mark.asyncio
+async def test_validate_sender_roles_any_branch_rejects(manager, fake_websocket):
+    """The ANY branch with no matching role rejects. Confirms the
+    `any(...)` short-circuit is taken (otherwise we'd accidentally
+    fall through into the check_all path)."""
+    manager.sender_roles = ["Admin", "Moderator"]
+    fake_websocket.state.user = {"roles": ["User"]}
+    assert manager._validate_sender_roles(fake_websocket) is False
+
+
+@pytest.mark.asyncio
+async def test_validate_sender_roles_check_all_passes(manager, fake_websocket):
+    """With check_all=True, a sender needs every required role."""
+    manager.sender_roles = ["Admin", "User"]
+    manager.check_all = True
+    fake_websocket.state.user = {"roles": ["User", "Admin"]}
+    assert manager._validate_sender_roles(fake_websocket) is True
+
+
+@pytest.mark.asyncio
+async def test_validate_sender_roles_check_all_fails(manager, fake_websocket):
+    """With check_all=True, missing any required role rejects."""
+    manager.sender_roles = ["Admin", "User"]
+    manager.check_all = True
+    fake_websocket.state.user = {"roles": ["User"]}  # missing Admin
+    assert manager._validate_sender_roles(fake_websocket) is False
+
+
+@pytest.mark.asyncio
+async def test_validate_sender_roles_case_insensitive(manager, fake_websocket):
+    """Roles are matched case-insensitively (the manager lowercases
+    both sides). Confirms the normalisation."""
+    manager.sender_roles = ["admin"]
+    fake_websocket.state.user = {"roles": ["ADMIN"]}
+    assert manager._validate_sender_roles(fake_websocket) is True
+
+
+@pytest.mark.asyncio
+async def test_validate_sender_roles_missing_roles_defaults_empty(
+        manager, fake_websocket):
+    """A user with no `roles` claim at all is treated as having zero
+    roles — and is therefore rejected when sender_roles is non-empty.
+    """
+    manager.sender_roles = ["Admin"]
+    fake_websocket.state.user = {"name": "No Roles"}  # no `roles` key
+    assert manager._validate_sender_roles(fake_websocket) is False
+
+
+@pytest.mark.asyncio
+async def test_send_aborts_when_sender_lacks_role(manager, monkeypatch, fake_websocket):
+    """`send()` validates sender roles when a `sender_websocket` is
+    provided. If the sender lacks the role, the call returns silently
+    without sending anything to the recipient."""
+    manager.sender_roles = ["Admin"]
+
+    sender = FakeWebSocket()
+    sender.state.user = {"name": "Evil User", "roles": ["User"]}
+
+    recipient = FakeWebSocket()
+    await recipient.accept()
+
+    await manager.send({"x": 1}, "create", recipient, sender_websocket=sender)
+
+    assert recipient.sent_jsons == []
+
+
+@pytest.mark.asyncio
+async def test_broadcast_aborts_when_sender_lacks_role(manager, monkeypatch):
+    """`broadcast()` validates sender roles when a `sender_websocket`
+    is provided. If the sender lacks the role, no recipient gets the
+    message."""
+    manager.sender_roles = ["Admin"]
+
+    ws1 = FakeWebSocket()
+    await ws1.accept()
+    sender = FakeWebSocket()
+    sender.state.user = {"name": "Evil User", "roles": ["User"]}
+
+    manager.active_connections = [ws1, sender]
+
+    await manager.broadcast({"x": 1}, "create", sender_websocket=sender)
+
+    assert ws1.sent_jsons == []
+
+
+@pytest.mark.asyncio
+async def test_get_server_sender_returns_admin_principal(manager):
+    """`get_server_sender()` returns a SimpleNamespace with an Admin
+    role — used as the pseudo-sender for server-initiated broadcasts
+    so they pass `_validate_sender_roles` without a real authenticated
+    user."""
+    sender = manager.get_server_sender()
+    assert sender.state.user.roles == ["Admin"]
+
+
+@pytest.mark.asyncio
 async def test_broadcast_server_with_errors(manager, monkeypatch):
     """Test broadcast_server handles errors with individual clients gracefully."""
     # Create a logger that will collect error messages

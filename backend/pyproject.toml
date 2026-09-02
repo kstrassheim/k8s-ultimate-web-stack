@@ -1,6 +1,15 @@
 [tool.coverage.run]
 source = ["."]
-omit = ["*/mock/*", "*/venv/*", "setup.py"]
+omit = [
+    "*/mock/*",
+    "*/venv/*",
+    "setup.py",
+    # Test files are excluded from the production coverage measurement. The
+    # target is "every production module reports 100%", not "every line of
+    # the test suite reports 100%". A missing test-file assertion is a test
+    # quality problem, not a coverage gap.
+    "*_test.py",
+]
 
 [tool.coverage.report]
 exclude_lines = [

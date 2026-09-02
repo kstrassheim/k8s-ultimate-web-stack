@@ -3,6 +3,7 @@ from unittest.mock import patch, mock_open, MagicMock
 import json
 import sys
 import os
+import importlib
 
 # Store original environment to restore it later
 original_environ = dict(os.environ)
@@ -34,46 +35,51 @@ def reset_config_module():
         del sys.modules['common.config']
 
 class TestConfigModule:
-    
-    @pytest.mark.skip(reason="module-level computed vars cannot be repatched in tests")
-    def test_mock_enabled_true(self, reset_config_module):
-        """Test mock_enabled is True when MOCK=true in environment"""
-        # Set up environment
-        os.environ['MOCK'] = 'true'
-        
-        # Mock file operations
+
+    def test_mock_enabled_true(self, reset_config_module, monkeypatch):
+        """Test mock_enabled is True when MOCK=true in environment.
+
+        `mock_enabled` is a module-level bool captured at first import,
+        so the only way to exercise the True branch is to re-import
+        the module under a patched MOCK=true env. We drop the cached
+        module and let importlib re-run the at-import block under our
+        patches. The fixture also drops the cached module before the
+        test so subsequent consumers see the original config.
+        """
+        import common  # noqa: F401  -- ensures the parent package is imported
+        monkeypatch.setenv("MOCK", "true")
+        sys.modules.pop("common.config", None)
+
         mock_json = {"env": {"value": "dev"}}
-        with patch('builtins.open', mock_open(read_data=json.dumps(mock_json))), \
-             patch('json.load', return_value=mock_json), \
-             patch('os.path.dirname', return_value='/mock/path'):
-            
-            # Import the module to trigger the conditional logic
-            import common.config
-            
-            # Verify mock_enabled is True
-            assert common.config.mock_enabled == True
-            # Verify config path includes 'mock'
-            assert 'mock/' in str(common.config.config_path)
-    
-    @pytest.mark.skip(reason="module-level computed vars cannot be repatched in tests")
-    def test_mock_enabled_false(self, reset_config_module):
-        """Test mock_enabled is False when MOCK is not true"""
-        # Set up environment
-        os.environ['MOCK'] = 'false'
-        
-        # Mock file operations
+        with patch("builtins.open", mock_open(read_data=json.dumps(mock_json))), \
+             patch("json.load", return_value=mock_json), \
+             patch("os.path.dirname", return_value="/mock/path"):
+            common.config = importlib.import_module("common.config")
+
+        assert common.config.mock_enabled is True
+        assert "mock/" in str(common.config.config_path)
+
+        # Drop the freshly-imported module so other tests pick up the
+        # original config object rather than this patched one.
+        sys.modules.pop("common.config", None)
+
+    def test_mock_enabled_false(self, reset_config_module, monkeypatch):
+        """Test mock_enabled is False when MOCK is not true. Same
+        import-reload pattern as the True case."""
+        import common  # noqa: F401
+        monkeypatch.setenv("MOCK", "false")
+        sys.modules.pop("common.config", None)
+
         mock_json = {"env": {"value": "prod"}}
-        with patch('builtins.open', mock_open(read_data=json.dumps(mock_json))), \
-             patch('json.load', return_value=mock_json), \
-             patch('os.path.dirname', return_value='/mock/path'):
-            
-            # Import the module to trigger the conditional logic
-            import common.config
-            
-            # Verify mock_enabled is False
-            assert common.config.mock_enabled == False
-            # Verify config path does not include 'mock'
-            assert 'mock/' not in common.config.config_path
+        with patch("builtins.open", mock_open(read_data=json.dumps(mock_json))), \
+             patch("json.load", return_value=mock_json), \
+             patch("os.path.dirname", return_value="/mock/path"):
+            common.config = importlib.import_module("common.config")
+
+        assert common.config.mock_enabled is False
+        assert "mock/" not in str(common.config.config_path)
+
+        sys.modules.pop("common.config", None)
     
     def test_file_not_found_fallback(self, reset_config_module):
         """Test fallback to alternate config path when file not found"""
