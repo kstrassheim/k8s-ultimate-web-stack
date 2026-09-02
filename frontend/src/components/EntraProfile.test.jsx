@@ -137,6 +137,46 @@ describe('EntraProfile Component', () => {
     const profileImage = screen.getByTestId('profile-image');
     expect(profileImage).toHaveAttribute('src', 'dummy-avatar-path.jpg');
   });
+
+  test('falls back to dummy avatar when the rendered photo <img> errors', async () => {
+    // Issue #143: getProfilePhoto() resolves with a perfectly good object
+    // URL, but the *rendering* can still fail — most commonly because the
+    // CSP refuses the resulting `blob:` URL (img-src must list `blob:`),
+    // but also on a revoked object URL, corrupt bytes, or any other <img>
+    // error. JavaScript cannot observe a CSP refused-render from the
+    // fetch promise, so without an `onError` handler the user is stuck
+    // looking at a broken-image glyph. Pin the fallback here so the
+    // navbar always renders something recognisable.
+    msalInstance.getActiveAccount.mockReturnValue(mockAccount);
+    const blobUrl = 'blob:https://example.test/profile-uuid';
+    getProfilePhoto.mockResolvedValue(blobUrl);
+
+    renderWithRouter(<EntraProfile />);
+
+    // Wait for the photo fetch to resolve and apply the blob: URL to the
+    // <img>. Don't wait on the test-id alone — that element exists from
+    // the initial render with the dummy-avatar fallback, which would
+    // resolve the wait before the async fetch settles.
+    let profileImage = await waitFor(() => {
+      const img = screen.getByTestId('profile-image');
+      expect(img).toHaveAttribute('src', blobUrl);
+      return img;
+    });
+
+    // Sanity check: the blob: photo is the src right before the error.
+    expect(profileImage).toHaveAttribute('src', blobUrl);
+
+    // Simulate the <img> erroring (CSP refused render, revoked URL, etc.).
+    fireEvent.error(profileImage);
+
+    // The onError handler must swap photoUrl back to the dummy avatar.
+    await waitFor(() => {
+      expect(screen.getByTestId('profile-image')).toHaveAttribute(
+        'src',
+        'dummy-avatar-path.jpg',
+      );
+    });
+  });
   
   test('calls loginPopup when sign-in button is clicked', async () => {
     // Ensure no active account

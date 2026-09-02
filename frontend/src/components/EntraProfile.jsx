@@ -94,11 +94,24 @@ const EntraProfile = () => {
       onMouseLeave={() => setShowTooltip(false)}
       {...props}
     >
-      <img 
-        src={photoUrl} 
-        alt="Profile" 
-        className="profile-image" 
-        data-testid="profile-image" 
+      <img
+        src={photoUrl}
+        alt="Profile"
+        className="profile-image"
+        data-testid="profile-image"
+        // Issue #143: getProfilePhoto() returns a perfectly good object
+        // URL when it resolves, but the *rendering* can still fail — most
+        // commonly because the CSP refuses the resulting `blob:` URL
+        // (img-src must list `blob:` for that to work), but also on a
+        // revoked object URL, corrupt bytes, or any other <img> error.
+        // JavaScript cannot observe a CSP refused-render from the fetch
+        // promise, and CSP-evaluating the <img> doesn't expose anything,
+        // so without an explicit handler the user is left looking at a
+        // broken-image glyph. Swap back to the dummy avatar on any error,
+        // so the navbar always renders something recognisable.
+        onError={() => {
+          setPhotoUrl(dummy_avatar);
+        }}
       />
       {showTooltip && account && !dropdownOpen && ( // Only render tooltip if dropdown is closed
         <span className="profile-custom-tooltip" data-testid="profile-custom-tooltip">{account.name}</span>
