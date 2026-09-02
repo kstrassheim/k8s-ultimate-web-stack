@@ -9,6 +9,14 @@ module.exports ={
       "^@/(.*)$": "<rootDir>/src/$1"
     },
     transform: {
+        // Vite replaces `import.meta.env.MODE` at build time, but jest does
+        // not — without a custom transform, `src/config.js` cannot load and
+        // the whole file lands at 0% coverage. The pattern below points the
+        // transform regex at the specific config file first; the second
+        // `@swc/jest` entry handles everything else. The pattern matches
+        // both relative and absolute paths because jest invokes the
+        // transformer with the absolute filename.
+        "(^|/)src/config\\.js$": "<rootDir>/jest.config-transformer.cjs",
         "^.+\\.[jt]sx?$": ["@swc/jest"],
         // react-router@8 transitively imports cookie-es@3.x, which is a
         // pure-ESM package shipping only `.mjs` files (no CJS build).
