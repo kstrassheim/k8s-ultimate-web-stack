@@ -152,7 +152,14 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-// Automatically open preview after each test
+// Automatically open preview after each test. `debug()` writes to the DOM
+// (it serialises the rendered HTML for jest-preview's UI), so it only runs
+// under a Browser-like environment — tests that opt into a non-jsdom env
+// (e.g. config.node.test.js, which uses `@jest-environment node` to drive
+// the `typeof window === 'undefined'` branch in src/config.js) must skip
+// this or the call will throw "ReferenceError: document is not defined".
 afterEach(() => {
-  debug();
+  if (typeof document !== 'undefined') {
+    debug();
+  }
 });
