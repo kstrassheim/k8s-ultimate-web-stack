@@ -5,8 +5,11 @@ describe('Backend security headers', () => {
     expect(response.headers['referrer-policy']).to.equal('strict-origin-when-cross-origin');
     expect(response.headers['permissions-policy']).to.equal('camera=(), microphone=(), geolocation=()');
     expect(response.headers['strict-transport-security']).to.equal('max-age=31536000; includeSubDomains');
+    // `blob:` is required in img-src so the navbar profile photo
+    // (a URL.createObjectURL() minted from /me/photo/$value) is allowed
+    // to render — issue #143.
     expect(response.headers['content-security-policy']).to.equal(
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com; frame-ancestors 'none'",
+      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com; frame-ancestors 'none'",
     );
   };
 

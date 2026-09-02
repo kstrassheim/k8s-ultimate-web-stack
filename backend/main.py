@@ -33,7 +33,18 @@ async def security_headers(request, call_next):
     response = await call_next(request)
     response.headers.setdefault(
         "Content-Security-Policy",
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com; frame-ancestors 'none'",
+        # `blob:` in img-src is required for the navbar profile photo
+        # (frontend/src/components/EntraProfile.jsx) — getProfilePhoto fetches
+        # the bytes via https://graph.microsoft.com (allowed by connect-src)
+        # and hands the <img> a URL.createObjectURL() result, which is a
+        # `blob:` URL. `blob:` is its own CSP source expression and is NOT
+        # covered by 'self', `data:`, or by listing graph.microsoft.com
+        # (that origin governs the fetch, not the object URL the fetch
+        # result is wrapped in). It only permits rendering object URLs the
+        # page itself minted from data it already fetched under connect-src;
+        # it does not widen the set of origins the app may talk to.
+        # See issue #143.
+        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com; frame-ancestors 'none'",
     )
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("X-Content-Type-Options", "nosniff")

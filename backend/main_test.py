@@ -315,11 +315,87 @@ class TestMainModule:
         csp = response.headers.get("content-security-policy")
         assert csp == (
             "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data:; connect-src 'self' "
+            # `blob:` is required in img-src so the navbar profile photo
+            # (a URL.createObjectURL() minted from /me/photo/$value bytes)
+            # is allowed to render — issue #143.
+            "img-src 'self' data: blob:; connect-src 'self' "
             "https://login.microsoftonline.com https://graph.microsoft.com; "
             "frame-ancestors 'none'"
         )
         assert response.headers.get("content-type", "").startswith(content_type)
+
+    def test_csp_img_src_allows_blob_for_graph_profile_photo(self):
+        """Issue #143 regression: a signed-in user's MS Graph profile photo
+        arrives as a `URL.createObjectURL()` URL, which is its own CSP source
+        expression — NOT covered by `'self'`, `data:`, or by listing
+        https://graph.microsoft.com (that origin governs the fetch, not the
+        object URL the fetch result is wrapped in). Dropping `blob:` from
+        img-src again would make the navbar show a broken-image glyph for
+        every user who actually has a Graph profile photo, so this test
+        parses the CSP and asserts the source is present.
+
+        Asserts on `img-src` specifically (not the whole header) so a future
+        unrelated tightening of another directive — e.g. adding a nonce, or
+        moving font-src into its own line — keeps the test meaningful
+        instead of turning it into a brittle exact-string match."""
+        csp = client.get("/").headers["content-security-policy"]
+        img_src = next(
+            (directive.strip()
+             for directive in csp.split(";")
+             if directive.strip().startswith("img-src")),
+            None,
+        )
+        assert img_src is not None, (
+            f"CSP must declare an img-src directive, got: {csp!r}"
+        )
+        sources = [s.strip() for s in img_src.split() if s.strip()]
+        assert "blob:" in sources, (
+            f"img-src must include `blob:` so the navbar profile photo "
+            f"(a URL.createObjectURL() minted from /me/photo/$value) is "
+            f"allowed to render (issue #143). Got: {img_src!r}"
+        )
+        # Acceptance criterion: no other directive is widened by this change.
+        # `frame-ancestors` must still lock to 'none' (literal `'none'`,
+        # not a URL — doesn't trigger CodeQL's URL-substring rule).
+        assert "'none'" in [
+            s for d in csp.split(";") if d.strip().startswith("frame-ancestors")
+            for s in d.split()
+        ], "frame-ancestors must stay locked to 'none'"
+        # `connect-src` must still pin to the two MS endpoints plus `'self'`.
+        # The full CSP (including connect-src) is also pinned verbatim by
+        # `_assert_security_headers` above — this targeted check is for a
+        # clearer error message if connect-src ever drifts. Implemented as
+        # a frozenset subset comparison rather than `URL in list` because
+        # the latter is the exact anti-pattern CodeQL's
+        # `py/incomplete-url-substring-sanitization` rule flags: CodeQL's
+        # data-flow analysis tracks URL literals through string ops and
+        # still complains about `"https://...com" in <list-of-CSP-tokens>`
+        # even when the list has been properly tokenized, because the
+        # tokens originated from an HTTP-derived string. Set arithmetic
+        # (`expected <= got`) has no substring semantics and is what the
+        # query is designed to distinguish from. Set is also semantically
+        # clearer here — we want "connect-src is exactly these sources",
+        # not "any string in connect-src contains 'login.microsoftonline.com'
+        # as a substring".
+        expected_connect_src = frozenset({
+            "'self'",
+            "https://login.microsoftonline.com",
+            "https://graph.microsoft.com",
+        })
+        connect_src_directive = next(
+            (d.strip() for d in csp.split(";")
+             if d.strip().startswith("connect-src")),
+            "",
+        )
+        got_connect_src = frozenset(connect_src_directive.split()) - {"connect-src"}
+        missing_connect_src = expected_connect_src - got_connect_src
+        extra_connect_src = got_connect_src - expected_connect_src
+        assert not missing_connect_src and not extra_connect_src, (
+            f"connect-src must equal exactly {sorted(expected_connect_src)}; "
+            f"missing={sorted(missing_connect_src)}, "
+            f"unexpected={sorted(extra_connect_src)} "
+            f"(got: {sorted(got_connect_src)})"
+        )
     
     # DELETED: `test_opentelemetry_middleware_configuration` and
     # `test_api_router_is_included` were parent-repo carryovers that
