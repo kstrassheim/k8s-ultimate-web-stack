@@ -355,36 +355,46 @@ class TestMainModule:
             f"allowed to render (issue #143). Got: {img_src!r}"
         )
         # Acceptance criterion: no other directive is widened by this change.
-        # `frame-ancestors` must still lock to 'none'; `connect-src` must
-        # still pin to the two MS endpoints we expect.
+        # `frame-ancestors` must still lock to 'none' (literal `'none'`,
+        # not a URL — doesn't trigger CodeQL's URL-substring rule).
         assert "'none'" in [
             s for d in csp.split(";") if d.strip().startswith("frame-ancestors")
             for s in d.split()
         ], "frame-ancestors must stay locked to 'none'"
-        # Parse the connect-src directive into its individual source tokens
-        # (mirrors the img-src / frame-ancestors checks above) and check
-        # membership in that list. Doing the `in` check against the raw
-        # directive string is the exact anti-pattern CodeQL's
-        # py/incomplete-url-substring-sanitization flags — a CSP like
-        # `connect-src 'self' https://attacker.example/https://login.microsoftonline.com`
-        # would falsely satisfy a substring check.
-        connect_src_sources = [
-            s.strip()
-            for d in csp.split(";")
-            if d.strip().startswith("connect-src")
-            for s in d.split()
-            if s.strip()
-        ]
-        assert "https://login.microsoftonline.com" in connect_src_sources, (
-            f"connect-src must include https://login.microsoftonline.com "
-            f"(got: {connect_src_sources!r})"
+        # `connect-src` must still pin to the two MS endpoints plus `'self'`.
+        # The full CSP (including connect-src) is also pinned verbatim by
+        # `_assert_security_headers` above — this targeted check is for a
+        # clearer error message if connect-src ever drifts. Implemented as
+        # a frozenset subset comparison rather than `URL in list` because
+        # the latter is the exact anti-pattern CodeQL's
+        # `py/incomplete-url-substring-sanitization` rule flags: CodeQL's
+        # data-flow analysis tracks URL literals through string ops and
+        # still complains about `"https://...com" in <list-of-CSP-tokens>`
+        # even when the list has been properly tokenized, because the
+        # tokens originated from an HTTP-derived string. Set arithmetic
+        # (`expected <= got`) has no substring semantics and is what the
+        # query is designed to distinguish from. Set is also semantically
+        # clearer here — we want "connect-src is exactly these sources",
+        # not "any string in connect-src contains 'login.microsoftonline.com'
+        # as a substring".
+        expected_connect_src = frozenset({
+            "'self'",
+            "https://login.microsoftonline.com",
+            "https://graph.microsoft.com",
+        })
+        connect_src_directive = next(
+            (d.strip() for d in csp.split(";")
+             if d.strip().startswith("connect-src")),
+            "",
         )
-        assert "https://graph.microsoft.com" in connect_src_sources, (
-            f"connect-src must include https://graph.microsoft.com "
-            f"(got: {connect_src_sources!r})"
-        )
-        assert "'self'" in connect_src_sources, (
-            f"connect-src must include 'self' (got: {connect_src_sources!r})"
+        got_connect_src = frozenset(connect_src_directive.split()) - {"connect-src"}
+        missing_connect_src = expected_connect_src - got_connect_src
+        extra_connect_src = got_connect_src - expected_connect_src
+        assert not missing_connect_src and not extra_connect_src, (
+            f"connect-src must equal exactly {sorted(expected_connect_src)}; "
+            f"missing={sorted(missing_connect_src)}, "
+            f"unexpected={sorted(extra_connect_src)} "
+            f"(got: {sorted(got_connect_src)})"
         )
     
     # DELETED: `test_opentelemetry_middleware_configuration` and
