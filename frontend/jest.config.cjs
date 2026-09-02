@@ -28,6 +28,7 @@ module.exports ={
     transformIgnorePatterns: [
       "/node_modules/(?!module-to-transform)/"
     ],
+    setupFiles: ['<rootDir>/jest.env-setup.js'],
     setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
     moduleDirectories: ['node_modules', 'src'],
     // Tell Jest to mock these files
