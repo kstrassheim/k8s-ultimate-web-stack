@@ -3,6 +3,8 @@ from unittest.mock import patch, MagicMock, mock_open
 import pytest
 import json
 import datetime
+import os
+import sys
 from pathlib import Path
 
 # Import the app to test
@@ -319,43 +321,170 @@ class TestMainModule:
         )
         assert response.headers.get("content-type", "").startswith(content_type)
     
-    @pytest.mark.skip(reason="mock_middleware fixture undefined; OTel middleware not configured in k8s-port")
-    def test_opentelemetry_middleware_configuration(self):
-        """Test that OpenTelemetry middleware is configured with the FastAPIInstrumentor"""
-        # Check that app has middleware
-        assert len(app.user_middleware) > 0
-        
-        # Find the FastAPIMiddleware (OpenTelemetry instruments via this)
-        found_otel = False
-        for middleware in app.user_middleware:
-            if "FastAPIMiddleware" in str(middleware.cls):
-                found_otel = True
-                break
-        
-        assert found_otel, "OpenTelemetry FastAPIMiddleware not found in app middleware"
-    
-    @pytest.mark.skip(reason="patch target mismatch; api_router is a module reference")
-    def test_api_router_is_included(self):
-        """Test that the API router is included at the correct prefix"""
-        # The issue is likely that your frontend router is handling all paths - 
-        # let's modify the assertion to test a different aspect
-        
-        # First let's patch any auth middleware that might be present
-        with patch('main.api_router') as mock_router:
-            # Force reload to apply our patch
-            import importlib
-            importlib.reload(main)
-            
-            # Now check that our router was included with the correct prefix
-            for call in mock_router.mock_calls:
-                if 'include_router' in str(call):
-                    # This assertion would pass if our router is properly included
-                    assert True
-                    return
-                    
-        # If we get here, no calls to include_router were found
-        # Let's verify the router exists in a different way
-        assert hasattr(main, 'api_router'), "API router should be defined"
-        
-        # Alternative test: verify the app has routes
-        assert len(app.routes) > 0, "App should have routes"
+    # DELETED: `test_opentelemetry_middleware_configuration` and
+    # `test_api_router_is_included` were parent-repo carryovers that
+    # didn't fit the k8s-port. The k8s-port has the OTel setup wrapped
+    # in a try/except (not via FastAPIInstrumentor-instrument_app's
+    # middleware injection), and `main.api_router` is a module reference
+    # captured at import time — `patch.object(main, "api_router")`
+    # would work but the test as written was unfixable. The router IS
+    # included (verified by the `test_health_endpoint` test, which
+    # wouldn't return 200 if it weren't), so the coverage loss is
+    # purely on a skipped test, not on real code.
+
+
+# ---------------------------------------------------------------------------
+# Coverage for the at-import side effects in main.py that the existing tests
+# never trigger (the modules are imported once at test collection time, with
+# the default config — empty DB seeded by the mock service). These tests
+# each reload `main` against a fresh, fully-mocked environment so the
+# `try / except` blocks and the OpenTelemetry setup branch at module top
+# level actually run.
+# ---------------------------------------------------------------------------
+
+
+class TestMainModuleImportSideEffects:
+    """Cover the at-import side effects of main.py:
+
+      - the OpenTelemetry try/except setup at module top (lines 52-59)
+      - the test-data seeding try/except at module top (lines 69-77)
+      - the _enumerate_dist_files helper walking dist/ (lines 130-137)
+      - the API-path 404 inside frontend_handler (line 215)
+    """
+
+    def test_opentelemetry_setup_failure_is_swallowed(self, monkeypatch):
+        """If the OTel SDK raises during the module-top setup block, the
+        `except Exception as e` (line 58-59) prints a warning instead of
+        failing the import. Pins the error branch on the setup code.
+        """
+        # Force the OTel try-block to raise so the except runs.
+        import opentelemetry.instrumentation.fastapi as otel_fastapi
+
+        def _raise(*a, **k):
+            raise ImportError("opentelemetry exploded")
+
+        monkeypatch.setattr(
+            otel_fastapi, "FastAPIInstrumentor", _raise
+        )
+        # Re-import main — the except must catch and continue.
+        import importlib
+        importlib.reload(main)
+
+    def test_seeding_runs_when_db_is_empty(self, monkeypatch):
+        """When both get_all_experiments() and get_all_divergence_readings()
+        return empty lists, the seeding try-block generates sample data
+        and prints the 'Created N experiments' banners (lines 71-75).
+
+        The seeding block runs at module-import time, so we drop the
+        cached modules from sys.modules and re-import main under fresh
+        patches: a MockFutureGadgetLabDataService whose getters return
+        empty, and a sentinel generate_test_data so we can verify it
+        was called.
+        """
+        import importlib
+
+        for name in (
+            "main",
+            "api.future_gadget_api",
+            "mock.mock_future_gadget_lab_data_service",
+        ):
+            sys.modules.pop(name, None)
+
+        svc = MagicMock()
+        svc.get_all_experiments.return_value = []
+        svc.get_all_divergence_readings.return_value = []
+
+        with patch(
+            "mock.mock_future_gadget_lab_data_service.MockFutureGadgetLabDataService",
+            return_value=svc,
+        ), patch(
+            "db.future_gadget_lab_data_service.generate_test_data",
+            return_value={
+                "experiments": [{"id": "EXP-X"}],
+                "divergence_readings": [{"id": "DR-X"}],
+            },
+        ) as gen:
+            importlib.import_module("main")
+
+        assert gen.called, (
+            "generate_test_data must be called when both data getters "
+            "return empty lists (lines 70-71)"
+        )
+        assert svc.get_all_experiments.call_count >= 1
+
+    def test_seeding_failure_is_swallowed(self, monkeypatch):
+        """If generate_test_data raises during the seeding try-block, the
+        `except Exception as e` (line 76-77) prints a warning and lets
+        the app continue. Pins the error branch on the seeding code.
+
+        Same import-replay strategy as the success-path test: drop
+        cached modules and re-import main with generate_test_data
+        patched to raise. The except clause must swallow the exception
+        so `import main` does not propagate it.
+        """
+        import importlib
+
+        for name in (
+            "main",
+            "api.future_gadget_api",
+            "mock.mock_future_gadget_lab_data_service",
+        ):
+            sys.modules.pop(name, None)
+
+        svc = MagicMock()
+        svc.get_all_experiments.return_value = []
+        svc.get_all_divergence_readings.return_value = []
+
+        with patch(
+            "mock.mock_future_gadget_lab_data_service.MockFutureGadgetLabDataService",
+            return_value=svc,
+        ), patch(
+            "db.future_gadget_lab_data_service.generate_test_data",
+            side_effect=RuntimeError("seeding exploded"),
+        ):
+            try:
+                importlib.import_module("main")
+            except Exception as e:
+                pytest.fail(
+                    f"seeding failure must be swallowed by the except "
+                    f"clause in main.py, got: {e!r}"
+                )
+
+    def test_enumerate_dist_files_returns_empty_for_missing_dir(self, tmp_path):
+        """`_enumerate_dist_files` returns an empty dict (rather than
+        crashing) when the configured root is not a directory. Pins the
+        `if not root.is_dir(): return out` branch (lines 131-132).
+        """
+        nonexistent = tmp_path / "nope"
+        from main import _enumerate_dist_files
+        assert _enumerate_dist_files(nonexistent) == {}
+
+    def test_enumerate_dist_files_walks_real_dir(self, tmp_path):
+        """`_enumerate_dist_files` walks the dist/ tree and maps each
+        relative path string to its absolute Path. Pins the for-loop body
+        (lines 133-137).
+        """
+        (tmp_path / "index.html").write_text("<html></html>")
+        (tmp_path / "nested").mkdir()
+        (tmp_path / "nested" / "app.js").write_text("// js")
+        # A subdirectory entry should be excluded (only files included).
+        (tmp_path / "nested" / "noisy-dir").mkdir()
+
+        from main import _enumerate_dist_files
+        out = _enumerate_dist_files(tmp_path)
+        assert set(out.keys()) == {"index.html", "nested/app.js"}
+        assert out["index.html"] == (tmp_path / "index.html")
+        assert out["nested/app.js"] == (tmp_path / "nested" / "app.js")
+
+    def test_frontend_handler_returns_404_for_api_path(self):
+        """The frontend_handler short-circuits requests to /api/... or
+        /future-gadget-lab/... with a 404, so the API routers get to
+        handle their own paths. Pins the `raise HTTPException(404, ...)`
+        branch (line 215).
+        """
+        for prefix in ("api", "future-gadget-lab"):
+            response = client.get(f"/{prefix}/whatever")
+            assert response.status_code == 404, (
+                f"/{prefix}/... must 404 from the frontend handler, "
+                f"got {response.status_code}"
+            )

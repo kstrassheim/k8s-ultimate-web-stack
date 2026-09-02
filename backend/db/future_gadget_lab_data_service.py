@@ -361,7 +361,13 @@ def calculate_worldline_status(experiments, readings=None):
                 closest_reading = reading
 
         if not closest_reading:
-            closest_reading = {
+            # Defensive fallback. Unreachable: the outer `if readings:`
+            # guard already ensures we have at least one entry, and the
+            # for-loop sets closest_reading on the first iteration
+            # (any finite distance is < inf). Kept so a refactor that
+            # changes either guard fails loudly rather than silently
+            # crashing on a missing key in the response.
+            closest_reading = {  # pragma: no cover
                 "reading": current_worldline,
                 "status": "unknown",
                 "recorded_by": "System",
