@@ -361,13 +361,31 @@ class TestMainModule:
             s for d in csp.split(";") if d.strip().startswith("frame-ancestors")
             for s in d.split()
         ], "frame-ancestors must stay locked to 'none'"
-        connect_src = next(
-            (d.strip() for d in csp.split(";") if d.strip().startswith("connect-src")),
-            "",
+        # Parse the connect-src directive into its individual source tokens
+        # (mirrors the img-src / frame-ancestors checks above) and check
+        # membership in that list. Doing the `in` check against the raw
+        # directive string is the exact anti-pattern CodeQL's
+        # py/incomplete-url-substring-sanitization flags — a CSP like
+        # `connect-src 'self' https://attacker.example/https://login.microsoftonline.com`
+        # would falsely satisfy a substring check.
+        connect_src_sources = [
+            s.strip()
+            for d in csp.split(";")
+            if d.strip().startswith("connect-src")
+            for s in d.split()
+            if s.strip()
+        ]
+        assert "https://login.microsoftonline.com" in connect_src_sources, (
+            f"connect-src must include https://login.microsoftonline.com "
+            f"(got: {connect_src_sources!r})"
         )
-        assert "https://login.microsoftonline.com" in connect_src
-        assert "https://graph.microsoft.com" in connect_src
-        assert "'self'" in connect_src
+        assert "https://graph.microsoft.com" in connect_src_sources, (
+            f"connect-src must include https://graph.microsoft.com "
+            f"(got: {connect_src_sources!r})"
+        )
+        assert "'self'" in connect_src_sources, (
+            f"connect-src must include 'self' (got: {connect_src_sources!r})"
+        )
     
     # DELETED: `test_opentelemetry_middleware_configuration` and
     # `test_api_router_is_included` were parent-repo carryovers that
