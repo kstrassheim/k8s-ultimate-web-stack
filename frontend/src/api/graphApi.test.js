@@ -82,6 +82,69 @@ describe('graphApi', () => {
       // Optionally verify the console.error was called without seeing the output
       expect(console.error).toHaveBeenCalled();
     });
+
+    it('returns undefined when Graph returns a non-ok response for the photo', async () => {
+      // Mirror the production path: Graph 404s when the user has no
+      // profile photo. The helper logs and falls through (no throw, no
+      // exception track) so the caller's component can fall back to the
+      // dummy avatar without an error toast.
+      const instance = {
+        acquireTokenSilent: jest.fn().mockResolvedValue({ accessToken: 'fake-token' }),
+      };
+      const account = { username: 'no-photo-user' };
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+      });
+
+      const result = await getProfilePhoto(instance, account);
+
+      expect(result).toBeUndefined();
+      expect(console.error).toHaveBeenCalledWith(
+        'Failed to fetch profile photo:',
+        'Not Found',
+      );
+      expect(appInsights.trackException).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('window overrides', () => {
+    // `getProfilePhoto` and `getAllGroups` both default to the inline
+    // implementation but allow `window.getProfilePhoto` /
+    // `window.getAllGroups` to replace them — the cypress/vite mock build
+    // uses that seam to swap in canned responses. Both branches of each
+    // ternary need to be hit for full coverage.
+    afterEach(() => {
+      delete window.getProfilePhoto;
+      delete window.getAllGroups;
+      jest.resetModules();
+    });
+
+    it('uses window.getProfilePhoto when set (ternary truthy branch)', async () => {
+      jest.resetModules();
+      const override = jest.fn().mockResolvedValue('http://override.example/avatar.png');
+      window.getProfilePhoto = override;
+
+      // Re-import so the module's top-level ternary picks up the override.
+      // eslint-disable-next-line global-require
+      const fresh = require('./graphApi');
+      const result = await fresh.getProfilePhoto({ acquireTokenSilent: jest.fn() }, { username: 'u' });
+      expect(override).toHaveBeenCalled();
+      expect(result).toBe('http://override.example/avatar.png');
+    });
+
+    it('uses window.getAllGroups when set (ternary truthy branch)', async () => {
+      jest.resetModules();
+      const override = jest.fn().mockResolvedValue([{ id: 'override-1' }]);
+      window.getAllGroups = override;
+
+      // eslint-disable-next-line global-require
+      const fresh = require('./graphApi');
+      const result = await fresh.getAllGroups({ getActiveAccount: jest.fn() });
+      expect(override).toHaveBeenCalled();
+      expect(result).toEqual([{ id: 'override-1' }]);
+    });
   });
 
   describe('getAllGroups', () => {
@@ -175,6 +238,27 @@ describe('graphApi', () => {
       expect(appInsights.trackException).toHaveBeenCalled();
       // Optionally verify the console.error was called without seeing the output
       expect(console.error).toHaveBeenCalled();
+    });
+
+    it('reads the response body text and throws on a non-ok response', async () => {
+      // The branch `if (!response.ok)` calls `await response.text()` to
+      // include Graph's error body in the thrown message. Distinct from
+      // a network failure (which fetch rejects).
+      const mockInstance = {
+        getActiveAccount: jest.fn().mockReturnValue({}),
+      };
+      retrieveTokenForGraph.mockResolvedValue('fake-group-token');
+      fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 403,
+        statusText: 'Forbidden',
+        text: jest.fn().mockResolvedValue('Insufficient privileges to complete the operation.'),
+      });
+
+      await expect(getAllGroups(mockInstance)).rejects.toThrow(
+        /Graph API error \(403\): Insufficient privileges/,
+      );
+      expect(appInsights.trackException).toHaveBeenCalled();
     });
   });
 });

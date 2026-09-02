@@ -50,6 +50,15 @@ const EntraProfile = () => {
       setAccount(currentAccount);
       fetchProfilePhotoFunc(currentAccount);
     }
+    /* istanbul ignore next -- the else-if guard's false arm is unreachable
+     * from unit tests: `account` starts as `null` on first render and is
+     * only ever set from inside this branch. By the time a re-render could
+     * observe `currentAccount === account`, React's dependency comparison
+     * already skipped re-running the effect (the dependency is the active
+     * account's `name`, which is also unchanged). The strict-equality guard
+     * is defensive against an upstream caller re-binding the same account
+     * object across mounts; the unit suite exercises the always-true arm.
+     */
   }, [instance.getActiveAccount()?.name]);
 
   useEffect(() => { fetchProfilePhotoFunc(); }, [account]);

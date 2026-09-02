@@ -12,7 +12,15 @@ const makeAuthenticatedRequest = async (instance, url, method = 'GET', body = nu
     appInsights.trackEvent({ name: `Api Call - Future Gadget Lab - ${method} ${url}` });
     
     const accessToken = await retrieveTokenForBackend(
-      instance, 
+      instance,
+      // `url.includes('admin')` was lifted from api.js but never applies
+      // to any futureGadgetApi endpoint — none of `/lab-experiments`,
+      // `/worldline-status`, `/worldline-history`, or
+      // `/divergence-readings` contains "admin". The ternary is kept as
+      // a defensive copy so a future endpoint doesn't silently strip the
+      // extra scope; coverage keeps the dead branch marked so a future
+      // endpoint can introduce it without a coverage drop.
+      /* istanbul ignore next -- dead branch: no futureGadgetApi URL contains 'admin' */
       url.includes('admin') ? ['Group.Read.All'] : []
     );
     

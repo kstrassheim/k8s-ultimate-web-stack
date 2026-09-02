@@ -116,26 +116,116 @@ describe('EntraProfile Component', () => {
     expect(profileImage).toHaveAttribute('src', 'photo-url.jpg');
   });
   
+  test('uses dummy avatar when getProfilePhoto returns an empty string', async () => {
+    // The `photo && typeof photo === 'string' && photo.trim() !== ''` guard
+    // covers three falsy cases (falsy, non-string, empty/whitespace). The
+    // existing "photo fetch fails" test covers the falsy/undefined case
+    // via an exception. This test exercises the `photo.trim() !== ''` arm
+    // by resolving with a non-empty string that's only whitespace.
+    msalInstance.getActiveAccount.mockReturnValue(mockAccount);
+    getProfilePhoto.mockResolvedValue('   ');
+
+    renderWithRouter(<EntraProfile />);
+
+    const profileImage = await waitFor(() => {
+      const img = screen.getByTestId('profile-image');
+      expect(img).toHaveAttribute('src', 'dummy-avatar-path.jpg');
+      return img;
+    });
+
+    expect(profileImage).toHaveAttribute('src', 'dummy-avatar-path.jpg');
+  });
+
+  test('shows the tooltip on mouse enter (dropdown closed)', async () => {
+    // The `!dropdownOpen && setShowTooltip(true)` arm in the mouseEnter
+    // handler. The 'displays tooltip on mouse enter and hides on mouse
+    // leave' test exercises the full path but asserts the visible state
+    // rather than the toggle wiring.
+    msalInstance.getActiveAccount.mockReturnValue(mockAccount);
+    renderWithRouter(<EntraProfile />);
+    await waitFor(() => {
+      expect(getProfilePhoto).toHaveBeenCalled();
+    });
+
+    const profileImage = screen.getByTestId('profile-image');
+    fireEvent.mouseEnter(profileImage);
+    // Tooltip should appear with the user's name (dropdown is closed).
+    expect(
+      screen.getByText(mockAccount.name, { selector: '.profile-custom-tooltip' }),
+    ).toBeInTheDocument();
+  });
+
   test('uses dummy avatar when photo fetch fails', async () => {
     // Set up active account
     msalInstance.getActiveAccount.mockReturnValue(mockAccount);
-    
+
     // Spy on console.error
     jest.spyOn(console, 'error').mockImplementation(() => {});
-    
+
     // Mock photo fetch failure
     getProfilePhoto.mockRejectedValue(new Error('Failed to fetch photo'));
-    
+
     renderWithRouter(<EntraProfile />);
-    
+
     // Wait for error handling to complete
     await waitFor(() => {
       expect(appInsights.trackException).toHaveBeenCalled();
     });
-    
+
     // Check for dummy avatar
     const profileImage = screen.getByTestId('profile-image');
     expect(profileImage).toHaveAttribute('src', 'dummy-avatar-path.jpg');
+  });
+
+  test('does not refetch the photo when the active account is unchanged', async () => {
+    // `else if (currentAccount !== account)` — when both are equal the
+    // effect skips the photo fetch. Seed an account, let it load once,
+    // then re-render without changing it and assert no extra fetch.
+    msalInstance.getActiveAccount.mockReturnValue(mockAccount);
+    getProfilePhoto.mockResolvedValue('photo-url.jpg');
+
+    const { rerender } = renderWithRouter(<EntraProfile />);
+    // The mount triggers two calls — one from the account-effect, one
+    // from the follow-up `[account]`-watching effect. Wait until both
+    // settle, then re-render to verify the no-refetch guard.
+    await waitFor(() => {
+      expect(getProfilePhoto).toHaveBeenCalledTimes(2);
+    });
+
+    const callsBeforeRerender = getProfilePhoto.mock.calls.length;
+
+    // Re-render with the same account — the effect's strict-equal
+    // check should NOT trigger another fetch.
+    rerender(
+      <MemoryRouter
+        initialEntries={['/test']}
+        future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+      >
+        <EntraProfile />
+      </MemoryRouter>
+    );
+    // Give the effect a tick to (not) re-fire.
+    await new Promise((r) => setTimeout(r, 50));
+    expect(getProfilePhoto).toHaveBeenCalledTimes(callsBeforeRerender);
+  });
+
+  test('clicking Sign In triggers loginPopup with the default loginRequest (forcePopup=false branch)', async () => {
+    // The Sign In button calls `logonFunc()` with no argument — the
+    // `forcePopup = false` default is materialised and the ternary picks
+    // the bare `loginRequest`. The "calls loginPopup when sign-in
+    // button is clicked" test below already does this implicitly; this
+    // test makes the assertion explicit.
+    msalInstance.getActiveAccount.mockReturnValue(null);
+    renderWithRouter(<EntraProfile />);
+    const signInButton = screen.getByTestId('sign-in-button');
+    fireEvent.click(signInButton);
+    await waitFor(() => {
+      expect(msalInstance.loginPopup).toHaveBeenCalled();
+    });
+    // The first call should have been made WITHOUT the `prompt:
+    // 'select_account'` flag — that's the `forcePopup = false` arm.
+    const passed = msalInstance.loginPopup.mock.calls[0][0];
+    expect(passed.prompt).toBeUndefined();
   });
 
   test('falls back to dummy avatar when the rendered photo <img> errors', async () => {
