@@ -254,4 +254,46 @@ describe('Chat Component', () => {
     expect(input).toBeDisabled();
     expect(sendButton).toBeDisabled();
   });
+
+  test('does not send when input is empty', async () => {
+    // Connect so the only thing that should block sending is the
+    // empty-input branch of the `inputMessage.trim() && status === connected`
+    // predicate. Without the trim guard, an Enter keypress or button
+    // click would emit a blank line.
+    await act(async () => {
+      mockStatusCallback('connected');
+    });
+
+    const sendButton = screen.getByRole('button', { name: /send/i });
+    const input = screen.getByPlaceholderText('Type a message...');
+
+    // Force the empty-input case: button is still disabled in this state
+    // because `!inputMessage.trim()` is false; click it anyway to drive
+    // the sendMessage() `if` branch's else arm through React's button
+    // (the disabled attribute would block a real click, but sendMessage()
+    // is also called from handleKeyPress). Use fireEvent on the disabled
+    // button so the test still reaches the function — the disable check
+    // happens inside sendMessage, not the disabled attribute.
+    fireEvent.click(sendButton);
+    fireEvent.keyPress(input, { key: 'Enter' });
+
+    const mockClient = WebSocketClient.mock.results[0].value;
+    expect(mockClient.send).not.toHaveBeenCalled();
+  });
+
+  test('does not send when key pressed is not Enter', async () => {
+    // Connect so the only blocking branch is the
+    // `if (e.key === 'Enter')` guard inside handleKeyPress.
+    await act(async () => {
+      mockStatusCallback('connected');
+    });
+    const input = screen.getByPlaceholderText('Type a message...');
+    fireEvent.change(input, { target: { value: 'Hello' } });
+
+    // Press a non-Enter key — the guard's else branch must fire.
+    fireEvent.keyPress(input, { key: 'a' });
+
+    const mockClient = WebSocketClient.mock.results[0].value;
+    expect(mockClient.send).not.toHaveBeenCalled();
+  });
 });

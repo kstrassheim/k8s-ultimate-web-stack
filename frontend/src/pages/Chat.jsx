@@ -12,23 +12,6 @@ const Chat = () => {
   const messagesEndRef = useRef(null);
   const socketClientRef = useRef(null);
 
-
-  // Parse message content to avoid duplicated usernames
-  const parseMessageContent = (messageText, username) => {
-    if (!messageText) return messageText;
-    
-    // Check for explicit "username: " pattern at beginning
-    const colonIndex = messageText.indexOf(': ');
-    if (colonIndex > 0) {
-      const potentialUsername = messageText.substring(0, colonIndex);
-      if (username && potentialUsername === username) {
-        return messageText.substring(colonIndex + 2);
-      }
-    }
-    
-    return messageText;
-  };
-
   useEffect(() => {
     // Create WebSocket client instance
     if (!socketClientRef.current) {
@@ -39,17 +22,18 @@ const Chat = () => {
     // Connect to WebSocket when component mounts
     socketClient.connect(instance);
     
-    // Subscribe to messages and status updates
-    // Use subscribeToMessages if it exists, otherwise fall back to subscribe
-    const messageMethod = socketClient.subscribeToMessages || socketClient.subscribe;
-    if (typeof messageMethod !== 'function') {
-      console.error('WebSocketClient is missing subscribe/subscribeToMessages method');
+    // Subscribe to messages and status updates.
+    // `subscribe` is the only message-subscription method on the current
+    // WebSocketClient. An earlier `subscribeToMessages` alias is no longer
+    // expected; if a future client ships without `subscribe`, surface the
+    // configuration error rather than silently dropping every message.
+    if (typeof socketClient.subscribe !== 'function') {
+      console.error('WebSocketClient is missing subscribe method');
       setError('WebSocket client configuration error');
       return;
     }
     
-    const unsubscribe = messageMethod.call(socketClient, (message) => {
-
+    const unsubscribe = socketClient.subscribe((message) => {
       setMessages(prevMessages => [...prevMessages, message]);
     });
     
@@ -79,7 +63,6 @@ const Chat = () => {
 
   const sendMessage = () => {
     if (inputMessage.trim() && connectionStatus === 'connected') {
-      // Use send method (previously sendMessage)
       socketClientRef.current.send(inputMessage);
       setInputMessage('');
     }
