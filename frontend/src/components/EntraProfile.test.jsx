@@ -422,15 +422,62 @@ describe('EntraProfile Component', () => {
     await waitFor(() => {
       expect(getProfilePhoto).toHaveBeenCalled();
     });
-  
+
     // Open menu and click "sign out"
     fireEvent.click(screen.getByTestId('profile-image'));
     fireEvent.click(screen.getByTestId('sign-out-button'));
-  
+
     // Ensure logout logic ran
     expect(msalInstance.logoutPopup).toHaveBeenCalled();
     // If your code navigates after logout, verify that as well:
     // expect(mockedNavigate).toHaveBeenCalledWith('/post-logout');
+  });
+
+  test('onMouseLeave on the profile-toggle wrapper hides the tooltip', async () => {
+    // The mouseLeave handler lives on the CustomToggle wrapper div
+    // around the <img>. React 19 implements onMouseLeave by listening
+    // for `mouseout` events and walking up the tree; firing mouseout
+    // on the wrapper with no `relatedTarget` is enough to drive the
+    // handler. The React-Bootstrap Dropdown.Toggle rewrites the
+    // wrapper's className to `dropdown-toggle` (via prop spread) — the
+    // img's parent is therefore still the right element to fire on.
+    msalInstance.getActiveAccount.mockReturnValue(mockAccount);
+    renderWithRouter(<EntraProfile />);
+    await waitFor(() => {
+      expect(getProfilePhoto).toHaveBeenCalled();
+    });
+
+    // Find the wrapper fresh — React re-renders after the photo
+    // promise resolves, which replaces __reactProps$* on the captured
+    // node. Holding onto a stale reference and firing on it afterwards
+    // is why earlier attempts to exercise this branch appeared to do
+    // nothing; the wrapper element itself is stable but its React
+    // props are not.
+    const profileImage = screen.getByTestId('profile-image');
+    const profileToggle = profileImage.parentElement;
+    expect(profileToggle).not.toBeNull();
+    expect(profileToggle.tagName).toBe('DIV');
+    // Sanity check: this is the CustomToggle wrapper React-Bootstrap
+    // annotated with `dropdown-toggle` via prop spread.
+    expect(profileToggle.className).toContain('dropdown-toggle');
+    expect(profileToggle.id).toBe('dropdown-profile');
+
+    // Show the tooltip by entering the wrapper.
+    fireEvent.mouseEnter(profileToggle);
+    expect(
+      screen.getByText(mockAccount.name, { selector: '.profile-custom-tooltip' }),
+    ).toBeInTheDocument();
+
+    // Re-query after the state update — same element in the DOM but
+    // a fresh React props object underneath.
+    const refreshedToggle = screen.getByTestId('profile-image').parentElement;
+    fireEvent.mouseOut(refreshedToggle);
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText(mockAccount.name, { selector: '.profile-custom-tooltip' }),
+      ).not.toBeInTheDocument();
+    });
   });
 
   test('redirects to saved path after successful login', async () => {

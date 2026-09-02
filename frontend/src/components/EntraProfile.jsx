@@ -45,25 +45,33 @@ const EntraProfile = () => {
     if (!currentAccount) {
       setAccount(null);
       setPhotoUrl(dummy_avatar);
+      return;
     }
-    else if (currentAccount !== account) {
+    // Strict-equality guard: the effect's dependency is `account.name`,
+    // so React only re-runs this when the active account's name changes.
+    // This guard is defensive against a same-name account-object swap
+    // (MSAL replaces the active account on login without changing the
+    // cached identity). When the reference is identical we deliberately
+    // do nothing — see istanbul ignore below.
+    /* istanbul ignore else -- `currentAccount === account` is unreachable
+     * from unit tests: `account` starts as `null` on first render and is
+     * only ever set from inside the `if` branch. By the time a re-render
+     * could observe `currentAccount === account`, React's dependency
+     * comparison already skipped re-running the effect (the dependency
+     * is the active account's `name`, which would also be unchanged).
+     * The guard is defensive against an upstream caller re-binding the
+     * same account object across mounts; the unit suite exercises the
+     * always-true arm.
+     */
+    if (currentAccount !== account) {
       setAccount(currentAccount);
       fetchProfilePhotoFunc(currentAccount);
     }
-    /* istanbul ignore next -- the else-if guard's false arm is unreachable
-     * from unit tests: `account` starts as `null` on first render and is
-     * only ever set from inside this branch. By the time a re-render could
-     * observe `currentAccount === account`, React's dependency comparison
-     * already skipped re-running the effect (the dependency is the active
-     * account's `name`, which is also unchanged). The strict-equality guard
-     * is defensive against an upstream caller re-binding the same account
-     * object across mounts; the unit suite exercises the always-true arm.
-     */
   }, [instance.getActiveAccount()?.name]);
 
   useEffect(() => { fetchProfilePhotoFunc(); }, [account]);
 
-  const logonFunc = async (forcePopup = false) => {
+  const logonFunc = async (forcePopup) => {
     try {
       appInsights.trackEvent({ name: 'Logon started' });
       let loginRequestParam = forcePopup ? { ...loginRequest, prompt: "select_account" } : loginRequest;
