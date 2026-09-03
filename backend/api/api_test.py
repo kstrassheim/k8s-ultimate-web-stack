@@ -354,53 +354,230 @@ class TestWebSocketEndpoint:
 
     @pytest.mark.asyncio
     async def test_websocket_security_warning_for_auth_data(self, monkeypatch, mock_websocket):
-        """Test security warning is sent when authentication data is detected in messages"""
+        """Test security warning is sent when a JWT-shaped message is detected.
+
+        Issue #140: replaces the old substring check ('token' in
+        data.lower()) with a JWT-shape detector so plain-English messages
+        ("the token bucket is full") no longer trigger a false positive
+        while a real three-segment JWT does.
+        """
         # Create a mock connection manager with AsyncMock methods
         mock_manager = MagicMock()
         mock_manager.auth_connect = AsyncMock()
         mock_manager.send_personal_message = AsyncMock()
-        
+
         # Track broadcast calls to ensure they don't happen
         broadcast_calls = []
         async def mock_broadcast(data, type, **kwargs):
             broadcast_calls.append((data, type, kwargs))
             return None
-        
+
         mock_manager.broadcast = mock_broadcast
         mock_manager.active_connections = []
-        
+
         # Patch the ChatConnectionManager in api.py
         monkeypatch.setattr("api.api.chatConnectionManager", mock_manager)
-        
-        # Set up the mock to return a message with authentication data, then a normal message, then disconnect
+
+        # A real JWT (header.payload.signature), a normal message, then disconnect.
+        jwt_message = (
+            "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        )
         mock_websocket.receive_text = AsyncMock(side_effect=[
-            "here is my token: xyz123",  # Message containing sensitive data
-            "Hello, normal message",     # Normal message
+            jwt_message,                  # Message containing a real JWT
+            "Hello, normal message",      # Normal message
             WebSocketDisconnect()
         ])
-        
+
         # Make sure state.user is properly configured
         mock_websocket.state.user = {"name": "Test User"}
-        
+
         # Call the WebSocket endpoint
         try:
             await api_router.routes[-1].endpoint(mock_websocket)
         except Exception as e:
             print(f"Expected exception: {e}")
-        
-        # Fix the spelling error - "chat" not "chatt"
+
+        # The JWT message triggers the private warning instead of an ack.
         assert mock_manager.send_personal_message.call_args_list[0][0][0] == "!!! Security warning: Authentication data should not be sent in chat messages !!!"
-        
+
         # Verify normal acknowledgment was sent for the second message
         assert mock_manager.send_personal_message.call_args_list[1][0][0] == "You sent: Hello, normal message"
-        
-        # Verify broadcast was called only once (for the normal message) and not for the sensitive one
+
+        # Verify broadcast was called only once (for the normal message) and not for the JWT one
         assert len(broadcast_calls) == 2  # One for the normal message, one for disconnect
-        
+
         # Get the arguments of the first broadcast call
         first_call_data = broadcast_calls[0][0]  # Data argument
-        
-        # Verify it only contains the normal message, not the token message
+
+        # Verify it only contains the normal message, not the JWT message
         assert "content" in first_call_data
         assert first_call_data["content"] == "Test User: Hello, normal message"
-        assert "token" not in first_call_data["content"]
+        assert "eyJ" not in first_call_data["content"]
+
+    @pytest.mark.asyncio
+    async def test_websocket_message_with_token_word_not_filtered(self, monkeypatch, mock_websocket):
+        """Plain-English messages containing 'token' must NOT be filtered.
+
+        Regression for the false-positive half of issue #140: a user
+        saying "the token bucket is full" was being dropped by the old
+        `'token' in data.lower()` substring check.
+        """
+        mock_manager = MagicMock()
+        mock_manager.auth_connect = AsyncMock()
+        mock_manager.send_personal_message = AsyncMock()
+
+        broadcast_calls = []
+        async def mock_broadcast(data, type, **kwargs):
+            broadcast_calls.append((data, type, kwargs))
+            return None
+
+        mock_manager.broadcast = mock_broadcast
+        mock_manager.active_connections = []
+
+        monkeypatch.setattr("api.api.chatConnectionManager", mock_manager)
+
+        mock_websocket.receive_text = AsyncMock(side_effect=[
+            "the token bucket is full",
+            "I need to authenticate the service account before deploy",
+            "authenticate me to the staging API please",
+            WebSocketDisconnect(),
+        ])
+        mock_websocket.state.user = {"name": "Test User"}
+
+        try:
+            await api_router.routes[-1].endpoint(mock_websocket)
+        except Exception as e:
+            print(f"Expected exception: {e}")
+
+        # None of these messages contained a JWT, so no security warning
+        # was sent. Every personal_message call is a plain "You sent: ..."
+        # acknowledgment.
+        for call in mock_manager.send_personal_message.call_args_list:
+            assert "Security warning" not in call[0][0]
+
+        # Three acks + zero warnings = three personal_message calls,
+        # one per inbound message, all "You sent: ...".
+        assert mock_manager.send_personal_message.call_count == 3
+        assert mock_manager.send_personal_message.call_args_list[0][0][0] == "You sent: the token bucket is full"
+        assert mock_manager.send_personal_message.call_args_list[1][0][0] == "You sent: I need to authenticate the service account before deploy"
+        assert mock_manager.send_personal_message.call_args_list[2][0][0] == "You sent: authenticate me to the staging API please"
+
+        # Each message was broadcast verbatim (plus the disconnect notice).
+        assert len(broadcast_calls) == 4
+        assert broadcast_calls[0][0]["content"] == "Test User: the token bucket is full"
+        assert broadcast_calls[1][0]["content"] == "Test User: I need to authenticate the service account before deploy"
+        assert broadcast_calls[2][0]["content"] == "Test User: authenticate me to the staging API please"
+
+    @pytest.mark.asyncio
+    async def test_websocket_jwt_inside_prose_is_filtered(self, monkeypatch, mock_websocket):
+        """A JWT embedded in surrounding prose (e.g. with a Bearer prefix) is filtered."""
+        mock_manager = MagicMock()
+        mock_manager.auth_connect = AsyncMock()
+        mock_manager.send_personal_message = AsyncMock()
+
+        broadcast_calls = []
+        async def mock_broadcast(data, type, **kwargs):
+            broadcast_calls.append((data, type, kwargs))
+            return None
+
+        mock_manager.broadcast = mock_broadcast
+        mock_manager.active_connections = []
+
+        monkeypatch.setattr("api.api.chatConnectionManager", mock_manager)
+
+        jwt = (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "5TJxQqWPjKqGQjKqGQjKqGQjKqGQjKqGQjKqGQjKqGQ"
+        )
+        mock_websocket.receive_text = AsyncMock(side_effect=[
+            f"here is my token, please look: Bearer {jwt}",
+            WebSocketDisconnect(),
+        ])
+        mock_websocket.state.user = {"name": "Test User"}
+
+        try:
+            await api_router.routes[-1].endpoint(mock_websocket)
+        except Exception as e:
+            print(f"Expected exception: {e}")
+
+        # The JWT message triggered the warning and was suppressed.
+        assert mock_manager.send_personal_message.call_args_list[0][0][0] == "!!! Security warning: Authentication data should not be sent in chat messages !!!"
+        # Only the disconnect broadcast happens; no message broadcast.
+        assert len(broadcast_calls) == 1
+        assert "left the chat" in broadcast_calls[0][0]["content"]
+
+
+class TestContainsJwtHelper:
+    """Unit tests for the contains_jwt() helper introduced for issue #140.
+
+    Covers the cases the issue called out by name:
+      * plain English containing 'token' / 'authenticate'  → False
+      * real three-segment JWTs                            → True
+      * JWT with Bearer prefix or embedded in prose        → True
+      * lookalikes that are NOT three base64url segments    → False
+    """
+
+    def test_plain_english_with_token_word_is_not_a_jwt(self):
+        from api.api import contains_jwt
+        assert contains_jwt("the token bucket is full") is False
+        assert contains_jwt("here is my token: xyz123") is False
+        assert contains_jwt("authentication required") is False
+        assert contains_jwt("authenticate me to staging") is False
+        assert contains_jwt("") is False
+
+    def test_real_jwt_is_detected(self):
+        from api.api import contains_jwt
+        jwt = (
+            "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0."
+            "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        )
+        assert contains_jwt(jwt) is True
+
+    def test_bearer_prefix_is_detected(self):
+        from api.api import contains_jwt
+        jwt = (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "5TJxQqWPjKqGQjKqGQjKqGQjKqGQjKqGQjKqGQjKqGQ"
+        )
+        assert contains_jwt(f"Authorization: Bearer {jwt}") is True
+
+    def test_jwt_inside_prose_is_detected(self):
+        from api.api import contains_jwt
+        jwt = (
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+            "5TJxQqWPjKqGQjKqGQjKqGQjKqGQjKqGQjKqGQjKqGQ"
+        )
+        assert contains_jwt(f"my token is {jwt}, please store it") is True
+
+    def test_two_segments_is_not_a_jwt(self):
+        from api.api import contains_jwt
+        # header + payload but no signature
+        assert contains_jwt(
+            "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
+            "eyJzdWIiOiIxMjM0NTY3ODkwIn0"
+        ) is False
+
+    def test_single_segment_with_dots_is_not_a_jwt(self):
+        from api.api import contains_jwt
+        # looks base64url-ish but only one segment
+        assert contains_jwt("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9") is False
+
+    def test_segments_missing_eyj_prefix_is_not_a_jwt(self):
+        from api.api import contains_jwt
+        # third segment is missing the eyJ prefix that real JWT payloads have
+        assert contains_jwt(
+            "eyJhbGciOiJIUzI1NiJ9."
+            "abcdefghijklmnopqrstuvwxyz012345."
+            "abcdefghijklmnopqrstuvwxyz012345"
+        ) is False
+
+    def test_eyj_substring_within_word_does_not_match(self):
+        from api.api import contains_jwt
+        # `\b` prevents matching when "eyJ" appears mid-word in surrounding prose
+        assert contains_jwt("theyJabber about tokens") is False
