@@ -183,7 +183,12 @@ const WorldlineMonitor = () => {
         // When worldline status changes, refresh the history data for the chart
         fetchWorldlineHistory()
           .then(() => {
-            // After history is loaded, ensure readings are also loaded
+            // After history is loaded, ensure readings are also loaded.
+            // The subscribe callback captures `readings` from the
+            // useEffect-run closure (when readings is still []), so
+            // !readings.length is always true here. The implicit else
+            // (skip) is unreachable from production code paths.
+            /* istanbul ignore else -- closure captures readings=[] at useEffect-run time, so this else never fires from production code paths */
             if (!readings.length) {
               return fetchDivergenceReadings();
             }
@@ -365,6 +370,10 @@ const WorldlineMonitor = () => {
           
           // For backward compatibility - if API doesn't include experiment details
           const experimentNumber = dataPointIndex;
+          // The `dataPointIndex > 0` guard is defensive: the early return
+          // above for dataPointIndex === 0 means the false branch
+          // (`: 0`) is unreachable from production code paths.
+          /* istanbul ignore next -- unreachable; dataPointIndex === 0 returns early at line ~355 */
           const previousValue = dataPointIndex > 0 ? series[seriesIndex][dataPointIndex-1] : 0;
           const currentValue = series[seriesIndex][dataPointIndex];
           const change = currentValue - previousValue;

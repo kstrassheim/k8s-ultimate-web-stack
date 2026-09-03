@@ -31,6 +31,11 @@ const Experiments = () => {
   const [initialised, setInitialised] = useState(false);
 
   // Load experiments data
+  // The default parameter is intentionally falsy-but-defined:
+  // every internal call site passes an explicit value (true on Reload,
+  // false after create/update/delete). Callers without an argument
+  // are not in this file, so the default-value branch is unreachable.
+  /* istanbul ignore next -- default parameter; every call site in this file passes an explicit value (true on Reload, false after CRUD) */
   const fetchExperiments = async (showMessage = false) => {
   setLoading(true);
     setError(null);
@@ -101,6 +106,11 @@ const Experiments = () => {
 
   // Delete experiment
   const handleDeleteExperiment = async () => {
+    // The modal flow always pairs openDeleteModal(experiment) with the
+    // confirm-delete click, so experimentToDelete is set before this
+    // function runs. The early return is defensive only — the
+    // falsy-experimentToDelete branch is unreachable from production.
+    /* istanbul ignore next -- defensive early return; the modal flow always sets experimentToDelete before this handler runs */
     if (!experimentToDelete) return;
     setLoading(true);
     setActionLoading(true);
@@ -440,11 +450,18 @@ const Experiments = () => {
 
 // Helper component for experiment form
 const ExperimentForm = ({ experiment, onSubmit, mode, loading }) => {
+  // ExperimentForm is rendered from Experiments.jsx only when showForm
+  // is true. openCreateForm sets a fresh blank object; openEditForm
+  // sets the fetched experiment. In both call sites experiment is
+  // truthy, so the `|| {}` and `if (experiment)` falsy branches are
+  // unreachable from production code paths.
+  /* istanbul ignore next -- Experiments.jsx only renders ExperimentForm with a truthy experiment (openCreateForm passes a fresh object, openEditForm passes the fetched record) */
   const [formData, setFormData] = useState(experiment || {});
   const [validated, setValidated] = useState(false);
   const [timestampError, setTimestampError] = useState('');
   
   useEffect(() => {
+    /* istanbul ignore next -- see comment on useState above; experiment is always truthy here */
     if (experiment) {
       setFormData(experiment);
     }

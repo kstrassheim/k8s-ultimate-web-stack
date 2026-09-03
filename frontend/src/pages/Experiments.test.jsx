@@ -1699,4 +1699,176 @@ describe('Experiments.jsx branch coverage', () => {
       );
     });
   });
+
+  // Line 136 (`instance.getActiveAccount()?.username || ''`): when the
+  // MSAL instance reports no active account (e.g. signed out, fresh
+  // session, or the active-account hook returns null), openCreateForm
+  // must NOT throw; it must fall back to the empty string so the form
+  // stays usable.
+  test('openCreateForm falls back to an empty creator_id when MSAL reports no active account', async () => {
+    useMsal.mockImplementation(() => ({
+      instance: {
+        // Active account lookup returns null — the common case before
+        // MSAL has populated the active account.
+        getActiveAccount: () => null,
+        setActiveAccount: jest.fn(),
+      },
+    }));
+
+    render(<Experiments />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Future Gadget Lab Experiments')).toBeInTheDocument();
+    });
+
+    expect(() => {
+      fireEvent.click(screen.getByTestId('new-experiment-btn'));
+    }).not.toThrow();
+
+    await waitFor(() => {
+      expect(screen.getByTestId('experiment-form-title')).toBeInTheDocument();
+    });
+
+    // The form rendered without throwing — the creator_id fallback
+    // (line 136, `|| ''`) ran. We don't assert the exact input value
+    // because the creator_id field is rendered as a read-only display
+    // in the create form; the assertion that matters is "the component
+    // survived the null active-account lookup".
+  });
+
+  // Lines 226-231 (update): when the local user updates an experiment
+  // they're currently editing, the inner `if (!isOwnAction && formMode
+  // === 'edit')` is false (because isOwnAction=true) AND the `else if
+  // (!isOwnAction)` is also false. Neither toast fires — the update is
+  // silently merged into the form.
+  test('WebSocket update from the current user while editing the same experiment is silently merged', async () => {
+    let messageHandler;
+    experimentsSocket.subscribe.mockImplementation((handler) => {
+      messageHandler = handler;
+      return jest.fn();
+    });
+
+    // Mock useMsal — the existing beforeEach already does this, but be
+    // explicit so the email pattern is obvious.
+    useMsal.mockImplementation(() => ({
+      instance: {
+        getActiveAccount: () => ({
+          username: 'okabe.rintaro@futuregadgetlab.org',
+        }),
+        setActiveAccount: jest.fn(),
+      },
+    }));
+
+    const { getExperimentById } = require('@/api/futureGadgetApi');
+    getExperimentById.mockResolvedValue({
+      id: 'exp-1',
+      name: 'Phone Microwave',
+      description: 'Send messages to the past',
+      status: 'completed',
+      creator_id: 'okabe',
+      world_line_change: 0.337192,
+      timestamp: '2025-04-07T14:00:00Z',
+    });
+
+    render(<Experiments />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Future Gadget Lab Experiments')).toBeInTheDocument();
+    });
+
+    // Open the edit form for exp-1 (formMode='edit', currentExperiment.id='exp-1').
+    fireEvent.click(screen.getByTestId('edit-btn-exp-1'));
+    await waitFor(() => {
+      expect(screen.getByTestId('experiment-form-title')).toHaveTextContent(
+        'Edit Experiment',
+      );
+    });
+
+    notyfService.warning.mockClear();
+    notyfService.info.mockClear();
+
+    // WebSocket update for the SAME experiment from the SAME user
+    // (actor === currentUserEmail). Both inner branches (line 226 and
+    // line 231) must remain silent.
+    act(() => {
+      messageHandler({
+        type: 'update',
+        id: 'exp-1',
+        name: 'Phone Microwave (self-update)',
+        actor: 'okabe.rintaro@futuregadgetlab.org',
+      });
+    });
+
+    expect(notyfService.warning).not.toHaveBeenCalled();
+    expect(notyfService.info).not.toHaveBeenCalled();
+  });
+
+  // Lines 245-250 (delete): when the local user deletes an experiment
+  // they're currently editing, the inner `if (!isOwnAction)` (line 245)
+  // is false (because isOwnAction=true) AND the `else if (!isOwnAction)`
+  // (line 250) is also false. Neither toast fires, and the form closes
+  // silently via `setShowForm(false)`.
+  test('WebSocket delete from the current user while editing the same experiment closes the form silently', async () => {
+    let messageHandler;
+    experimentsSocket.subscribe.mockImplementation((handler) => {
+      messageHandler = handler;
+      return jest.fn();
+    });
+
+    useMsal.mockImplementation(() => ({
+      instance: {
+        getActiveAccount: () => ({
+          username: 'okabe.rintaro@futuregadgetlab.org',
+        }),
+        setActiveAccount: jest.fn(),
+      },
+    }));
+
+    const { getExperimentById } = require('@/api/futureGadgetApi');
+    getExperimentById.mockResolvedValue({
+      id: 'exp-1',
+      name: 'Phone Microwave',
+      description: 'Send messages to the past',
+      status: 'completed',
+      creator_id: 'okabe',
+      world_line_change: 0.337192,
+      timestamp: '2025-04-07T14:00:00Z',
+    });
+
+    render(<Experiments />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Future Gadget Lab Experiments')).toBeInTheDocument();
+    });
+
+    // Open the edit form for exp-1.
+    fireEvent.click(screen.getByTestId('edit-btn-exp-1'));
+    await waitFor(() => {
+      expect(screen.getByTestId('experiment-form-title')).toHaveTextContent(
+        'Edit Experiment',
+      );
+    });
+
+    notyfService.warning.mockClear();
+    notyfService.info.mockClear();
+
+    // WebSocket delete for the SAME experiment from the SAME user.
+    act(() => {
+      messageHandler({
+        type: 'delete',
+        id: 'exp-1',
+        name: 'Phone Microwave',
+        actor: 'okabe.rintaro@futuregadgetlab.org',
+      });
+    });
+
+    // The form must close silently — no warning, no info toast.
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId('experiment-form-title'),
+      ).not.toBeInTheDocument();
+    });
+    expect(notyfService.warning).not.toHaveBeenCalled();
+    expect(notyfService.info).not.toHaveBeenCalled();
+  });
 });
