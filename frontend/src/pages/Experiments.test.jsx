@@ -1871,4 +1871,102 @@ describe('Experiments.jsx branch coverage', () => {
     expect(notyfService.warning).not.toHaveBeenCalled();
     expect(notyfService.info).not.toHaveBeenCalled();
   });
+
+  // Branch 16 (line 241) — `else if (!isOwnAction)` second location: when
+  // the outer `if (showForm && currentExperiment && currentExperiment.id
+  // === data.id)` is FALSE (no form is open, or a different experiment
+  // is being edited) AND the actor is the current user, the `else if`
+  // body must NOT fire. The location-2 (skip) hit counter on branch 16
+  // requires at least one WS message in that exact shape.
+  test('WebSocket update from the current user while not editing skips the else-if info toast', async () => {
+    let messageHandler;
+    experimentsSocket.subscribe.mockImplementation((handler) => {
+      messageHandler = handler;
+      return jest.fn();
+    });
+
+    // Default useMsal mock (from outer beforeEach) reports
+    // 'okabe.rintaro@future-gadget-lab.org' as the active account.
+
+    render(<Experiments />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Phone Microwave')).toBeInTheDocument();
+    });
+
+    notyfService.info.mockClear();
+    notyfService.warning.mockClear();
+
+    // No form is open (showForm=false → outer if is FALSE) and the actor
+    // is the current user (isOwnAction=true → !isOwnAction is FALSE →
+    // the else-if body is skipped). Only the outer setExperiments merge
+    // runs; neither toast should fire.
+    act(() => {
+      messageHandler({
+        type: 'update',
+        id: 'exp-1',
+        name: 'Phone Microwave (self-update)',
+        actor: 'okabe.rintaro@future-gadget-lab.org',
+      });
+    });
+
+    expect(notyfService.info).not.toHaveBeenCalled();
+    expect(notyfService.warning).not.toHaveBeenCalled();
+
+    // Grid still got the merge — the row label updates in place.
+    await waitFor(() => {
+      expect(
+        screen.getByText('Phone Microwave (self-update)'),
+      ).toBeInTheDocument();
+    });
+  });
+
+  // Branch 21 (line 260) — `else if (!isOwnAction)` second location: when
+  // the outer `if (showForm && currentExperiment && currentExperiment.id
+  // === data.id)` is FALSE (no form is open, or a different experiment
+  // is being edited) AND the actor is the current user, the `else if`
+  // body must NOT fire. The location-2 (skip) hit counter on branch 21
+  // requires at least one WS delete message in that exact shape.
+  test('WebSocket delete from the current user while not editing skips the else-if info toast', async () => {
+    let messageHandler;
+    experimentsSocket.subscribe.mockImplementation((handler) => {
+      messageHandler = handler;
+      return jest.fn();
+    });
+
+    render(<Experiments />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Phone Microwave')).toBeInTheDocument();
+    });
+
+    notyfService.info.mockClear();
+    notyfService.warning.mockClear();
+
+    const rowsBefore = screen.getAllByTestId(/^experiment-row-/).length;
+
+    // No form is open and the actor is the current user → outer if FALSE,
+    // !isOwnAction FALSE → else-if body is skipped. The grid still drops
+    // the row, but no toast surfaces.
+    act(() => {
+      messageHandler({
+        type: 'delete',
+        id: 'exp-1',
+        name: 'Phone Microwave',
+        actor: 'okabe.rintaro@future-gadget-lab.org',
+      });
+    });
+
+    expect(notyfService.info).not.toHaveBeenCalled();
+    expect(notyfService.warning).not.toHaveBeenCalled();
+
+    await waitFor(() => {
+      expect(
+        screen.queryByText('Phone Microwave'),
+      ).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId(/^experiment-row-/).length).toBe(
+      rowsBefore - 1,
+    );
+  });
 });
