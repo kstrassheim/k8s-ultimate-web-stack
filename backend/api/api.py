@@ -1,11 +1,39 @@
 from fastapi import APIRouter, Security, HTTPException, Body, WebSocket, WebSocketDisconnect, Query
 from pydantic import BaseModel
+import re
 from common.auth import azure_scheme, scopes
 from common.log import logger
 from common.role_based_access import required_roles
 from common.socket import ConnectionManager
 
 api_router = APIRouter()
+
+# Defense-in-depth on the chat broadcast surface: drop messages that paste a
+# JWT-shaped token so it doesn't get fanned out to every connected client.
+# Authentication itself is already enforced upstream in
+# ConnectionManager.auth_connect(); this only stops the body of a chat
+# message from echoing a raw token to the room.
+#
+# A JWT has three base64url segments separated by dots. The first two
+# segments (header + payload) always start with "eyJ" because they are
+# JSON objects whose first character ("{") encodes to that prefix in
+# base64url. The third segment is the signature with no fixed prefix, so
+# we only constrain it to base64url characters.
+_JWT_PATTERN = re.compile(
+    r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"
+)
+
+def contains_jwt(text: str) -> bool:
+    """Return True if `text` contains a JWT-shaped substring.
+
+    Catches the common case of a user pasting a real JWT (optionally with a
+    `Bearer ` prefix or wrapped in surrounding prose) into a chat message.
+    This is a heuristic — it matches the standard three-segment base64url
+    shape but cannot catch every possible encoding. Authentication of the
+    WebSocket connection itself is already enforced upstream in
+    ConnectionManager.auth_connect().
+    """
+    return bool(_JWT_PATTERN.search(text))
 
 @api_router.get("/user-data")
 async def get_user_data(token=Security(azure_scheme, scopes=scopes)):
@@ -50,13 +78,16 @@ async def websocket_endpoint(websocket: WebSocket):
             while True:
                 data = await websocket.receive_text()
                 user_name = websocket.state.user.get("name", "Unknown User")
-                
-                # SECURITY CHECK: Skip broadcasting authentication messages
-                # Check if this is an authentication message
-                if 'token' in data.lower() or 'authenticate' in data.lower():
+
+                # Suppress broadcast of messages that look like a raw JWT.
+                # Replaces the previous `in data.lower()` substring check,
+                # which dropped legitimate plain-English messages ("the
+                # token bucket is full") while letting real JWTs through
+                # ("Bearer eyJ..."). See issue #140 for the reasoning.
+                if contains_jwt(data):
                     # Send private warning
                     await chatConnectionManager.send_personal_message(
-                        "!!! Security warning: Authentication data should not be sent in chat messages !!!", 
+                        "!!! Security warning: Authentication data should not be sent in chat messages !!!",
                         websocket
                     )
                     continue  # Skip further processing of this message
