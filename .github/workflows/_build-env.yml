@@ -57,10 +57,10 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Set up OpenTofu
-        uses: opentofu/setup-opentofu@v2
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2
         with:
           tofu_version: 1.12.6
 
@@ -73,7 +73,7 @@ jobs:
           tofu output -json > terraform.config.json
 
       - name: Upload config artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: web-tofu-config-${{ inputs.tf_env }}
           path: terraform/terraform.config.json
@@ -85,10 +85,10 @@ jobs:
     runs-on: arc-runner-scale-k8s-ultimate-web-stack
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Fetch terraform config
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: web-tofu-config-${{ inputs.tf_env }}
           path: _tfconfig
@@ -105,12 +105,18 @@ jobs:
             --username "$REGISTRY_USERNAME" --password-stdin
 
       - name: Build & push image
+        env:
+          # `image_tags` is repo-controlled today, but unquoted `${{ }}` in a
+          # `run:` block widens to shell injection if a future caller ever
+          # accepts the input from an external source. `env:` + `"$IMG_TAGS"`
+          # makes the value a single shell argument regardless of content.
+          IMG_TAGS: ${{ inputs.image_tags }}
         run: |
           set -euo pipefail
           tag_args=""
-          for t in ${{ inputs.image_tags }}; do tag_args="${tag_args} -t ${t}"; done
+          for t in $IMG_TAGS; do tag_args="${tag_args} -t ${t}"; done
           docker build ${tag_args} -f backend/Dockerfile .
-          for t in ${{ inputs.image_tags }}; do docker push "${t}"; done
+          for t in $IMG_TAGS; do docker push "${t}"; done
 
       # Image tags are mutable (web:dev/test/prod), so the manifest doesn't
       # change and ArgoCD won't roll on its own — restart the deployment to pull
@@ -119,10 +125,15 @@ jobs:
       # k8s/base/runner-rollout-rbac.yaml. The apps ignore the restartedAt
       # annotation so this doesn't fight selfHeal.
       - name: Set up kubectl
-        uses: azure/setup-kubectl@v5
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
       - name: Roll out new image
+        env:
+          # Same defense-in-depth as the build step above: `rollout_namespace`
+          # is repo-controlled today, but `${{ inputs.rollout_namespace }}`
+          # inside `run:` is a shell-injection sink if a future caller ever
+          # passes an externally-sourced value.
+          NAMESPACE: ${{ inputs.rollout_namespace }}
         run: |
           set -euo pipefail
-          ns="${{ inputs.rollout_namespace }}"
-          kubectl rollout restart deployment/web -n "$ns"
-          kubectl rollout status  deployment/web -n "$ns" --timeout=300s
+          kubectl rollout restart deployment/web -n "$NAMESPACE"
+          kubectl rollout status  deployment/web -n "$NAMESPACE" --timeout=300s
