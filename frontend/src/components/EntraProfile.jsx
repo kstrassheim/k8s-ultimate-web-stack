@@ -47,22 +47,21 @@ const EntraProfile = () => {
       setPhotoUrl(dummy_avatar);
       return;
     }
-    // Strict-equality guard: the effect's dependency is `account.name`,
-    // so React only re-runs this when the active account's name changes.
-    // This guard is defensive against a same-name account-object swap
-    // (MSAL replaces the active account on login without changing the
-    // cached identity). When the reference is identical we deliberately
-    // do nothing — see istanbul ignore below.
-    /* istanbul ignore else -- `currentAccount === account` is unreachable
-     * from unit tests: `account` starts as `null` on first render and is
-     * only ever set from inside the `if` branch. By the time a re-render
-     * could observe `currentAccount === account`, React's dependency
-     * comparison already skipped re-running the effect (the dependency
-     * is the active account's `name`, which would also be unchanged).
-     * The guard is defensive against an upstream caller re-binding the
-     * same account object across mounts; the unit suite exercises the
-     * always-true arm.
-     */
+    // Strict-equality guard against same-account re-renders. The
+    // effect's dependency is `account.name`, so React only re-runs
+    // this when the active account's name changes. `account` starts
+    // as `null` and is only ever assigned from inside the
+    // `if (currentAccount !== account)` arm below, so once the effect
+    // has run for the active account, subsequent re-runs observe
+    // `currentAccount === account` and the implicit else (do nothing)
+    // is unreachable from production paths and the unit suite. The
+    // guard is kept for defence-in-depth against an upstream caller
+    // re-binding the same account object across mounts. (Originally
+    // written as `if / else if`; flattened to `if … return; if` so the
+    // unreachable implicit-else can be marked with `istanbul ignore
+    // else` without losing coverage of the `currentAccount !==
+    // account` arm — see issue #135.)
+    /* istanbul ignore else -- `currentAccount === account` is unreachable: account starts null and is only set when it differs from the active account */
     if (currentAccount !== account) {
       setAccount(currentAccount);
       fetchProfilePhotoFunc(currentAccount);
@@ -71,7 +70,7 @@ const EntraProfile = () => {
 
   useEffect(() => { fetchProfilePhotoFunc(); }, [account]);
 
-  const logonFunc = async (forcePopup) => {
+  const logonFunc = async (forcePopup = false) => {
     try {
       appInsights.trackEvent({ name: 'Logon started' });
       let loginRequestParam = forcePopup ? { ...loginRequest, prompt: "select_account" } : loginRequest;
@@ -201,7 +200,7 @@ const EntraProfile = () => {
       
       <UnauthenticatedTemplate>
         <div data-testid="unauthenticated-container">
-          <Button variant="outline-light" className="me-3" size="sm" onClick={() => logonFunc(false)} data-testid="sign-in-button">
+          <Button variant="outline-light" className="me-3" size="sm" onClick={() => logonFunc()} data-testid="sign-in-button">
             Sign In
           </Button>
         </div>

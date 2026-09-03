@@ -13,15 +13,13 @@ const makeAuthenticatedRequest = async (instance, url, method = 'GET', body = nu
     
     const accessToken = await retrieveTokenForBackend(
       instance,
-      // `url.includes('admin')` was lifted from api.js but never applies
-      // to any futureGadgetApi endpoint — none of `/lab-experiments`,
-      // `/worldline-status`, `/worldline-history`, or
-      // `/divergence-readings` contains "admin". The ternary is kept as
-      // a defensive copy so a future endpoint doesn't silently strip the
-      // extra scope; coverage keeps the dead branch marked so a future
-      // endpoint can introduce it without a coverage drop.
-      /* istanbul ignore next -- dead branch: no futureGadgetApi URL contains 'admin' */
-      url.includes('admin') ? ['Group.Read.All'] : []
+      // No futureGadgetApi endpoint contains 'admin' (verified — the
+      // module's URL list is `/lab-experiments`, `/lab-experiments/:id`,
+      // `/worldline-status`, `/worldline-history`, `/divergence-readings`),
+      // so the `Group.Read.All` extra-scope handshake is dead in this
+      // module. The lift from api.js (which does call `/admin-data`) was
+      // removed as part of issue #135.
+      []
     );
     
     const headers = {

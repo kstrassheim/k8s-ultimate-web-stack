@@ -36,17 +36,6 @@ describe('entraAuth Module', () => {
       expect(typeof config.system.loggerOptions.loggerCallback).toBe('function');
     });
 
-    it('falls back to frontendUrl when window is not defined (SSR/Node case)', () => {
-      // `typeof window !== 'undefined' ? window.location.origin + basePath : frontendUrl`
-      // — the frontendUrl fallback is unreachable from jest's jsdom
-      // environment (jsdom always provides `window`, and
-      // `delete globalThis.window` is a no-op once jest's runtime has
-      // hooked the global). The branch is marked with an istanbul
-      // ignore comment in entrauth.js; this test is kept as a
-      // documentation hook for the fallback contract.
-      expect(true).toBe(true);
-    });
-
     it('routes LogLevel.Error messages to console.error and other levels to console.info', () => {
       // The loggerCallback's ternary `level === LogLevel.Error ? 'error' :
       // 'info'` has two halves. Capture both halves explicitly. The

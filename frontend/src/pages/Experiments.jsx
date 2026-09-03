@@ -30,13 +30,10 @@ const Experiments = () => {
   const initFetchCompleted = useRef(false);
   const [initialised, setInitialised] = useState(false);
 
-  // Load experiments data
-  // The default parameter is intentionally falsy-but-defined:
-  // every internal call site passes an explicit value (true on Reload,
-  // false after create/update/delete). Callers without an argument
-  // are not in this file, so the default-value branch is unreachable.
-  /* istanbul ignore next -- default parameter; every call site in this file passes an explicit value (true on Reload, false after CRUD) */
-  const fetchExperiments = async (showMessage = false) => {
+  // Load experiments data. Every call site in this file passes an explicit
+  // value for `showMessage` (true on Reload, false after create/update/delete),
+  // so the parameter is required rather than defaulted — see issue #135.
+  const fetchExperiments = async (showMessage) => {
   setLoading(true);
     setError(null);
     
@@ -448,25 +445,24 @@ const Experiments = () => {
   );
 };
 
-// Helper component for experiment form
+// Helper component for experiment form. Experiments.jsx only mounts
+// ExperimentForm when showForm is true, and both openCreateForm
+// (fresh object) and openEditForm (fetched record) hand it a truthy
+// `experiment`. The `|| {}` fallback on the initial state was removed
+// in issue #135 (it was dead — the prop is always truthy here); the
+// `experiment` prop itself can change while the form is open (the WS
+// `update` handler in the parent calls `setCurrentExperiment(data)`
+// when the user is editing the experiment another user touched), so
+// `formData` is kept in sync with the prop via the effect below.
 const ExperimentForm = ({ experiment, onSubmit, mode, loading }) => {
-  // ExperimentForm is rendered from Experiments.jsx only when showForm
-  // is true. openCreateForm sets a fresh blank object; openEditForm
-  // sets the fetched experiment. In both call sites experiment is
-  // truthy, so the `|| {}` and `if (experiment)` falsy branches are
-  // unreachable from production code paths.
-  /* istanbul ignore next -- Experiments.jsx only renders ExperimentForm with a truthy experiment (openCreateForm passes a fresh object, openEditForm passes the fetched record) */
-  const [formData, setFormData] = useState(experiment || {});
+  const [formData, setFormData] = useState(experiment);
   const [validated, setValidated] = useState(false);
   const [timestampError, setTimestampError] = useState('');
-  
+
   useEffect(() => {
-    /* istanbul ignore next -- see comment on useState above; experiment is always truthy here */
-    if (experiment) {
-      setFormData(experiment);
-    }
+    setFormData(experiment);
   }, [experiment]);
-  
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     
