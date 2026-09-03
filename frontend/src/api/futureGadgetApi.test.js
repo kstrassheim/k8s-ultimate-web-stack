@@ -162,8 +162,27 @@ describe('Future Gadget Lab API', () => {
     
     it('should handle errors properly', async () => {
       global.fetch.mockRejectedValueOnce(new Error('Network error'));
-      
+
       await expect(getAllExperiments(mockInstance)).rejects.toThrow('Network error');
+      expect(appInsights.trackException).toHaveBeenCalled();
+    });
+
+    it('throws on a non-ok response from the backend', async () => {
+      // The `if (!response.ok)` branch in `makeAuthenticatedRequest` is
+      // the HTTP-level rejection path — distinct from a network failure
+      // (which `fetch` rejects). Both surface as a throw to the caller
+      // but they take separate branches.
+      global.fetch.mockReset();
+      global.fetch.mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: 'Service Unavailable',
+        json: jest.fn(),
+      });
+
+      await expect(getAllExperiments(mockInstance)).rejects.toThrow(
+        /Request failed \(503\)/,
+      );
       expect(appInsights.trackException).toHaveBeenCalled();
     });
   });

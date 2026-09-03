@@ -271,5 +271,149 @@ describe('Dashboard Component', () => {
       expect(screen.queryByTestId('groups-consent-required')).not.toBeInTheDocument();
       expect(notyfService.error).toHaveBeenCalled();
     });
+
+    // Lines 48-50 of Dashboard.jsx: the `grantGroupAccess` catch branch.
+    // A user with consent denied clicks "Grant access"; the interactive
+    // call still rejects (this time with a non-consent Graph outage) and
+    // the catch must surface the error in the UI plus the standard
+    // notyfService.error + appInsights.trackException side effects.
+    test('grantGroupAccess reports non-consent Graph failures', async () => {
+      // First call (mount, non-interactive) rejects with consent error so
+      // the prompt is shown.
+      getAllGroups.mockRejectedValueOnce(consentError());
+      // Second call (interactive, from the user clicking Grant access)
+      // rejects with a non-consent outage — exercises the catch branch.
+      getAllGroups.mockRejectedValueOnce(
+        new Error('Graph API error (503)'),
+      );
+
+      render(<Dashboard />);
+
+      // Wait for the prompt to render, then click it.
+      const grantButton = await waitFor(() =>
+        screen.getByTestId('grant-groups-access-button'),
+      );
+      fireEvent.click(grantButton);
+
+      // The error must surface in the UI plus the side-effect channels.
+      await waitFor(() => {
+        expect(screen.getByTestId('error-message')).toHaveTextContent(
+          'Graph API error (503)',
+        );
+      });
+      expect(notyfService.error).toHaveBeenCalledWith(
+        'Failed to load groups: Graph API error (503)',
+      );
+      expect(appInsights.trackException).toHaveBeenCalledWith(
+        expect.objectContaining({
+          exception: expect.any(Error),
+        }),
+      );
+      // The prompt stays up because the call did not yield groups data.
+      expect(screen.getByTestId('groups-consent-required')).toBeInTheDocument();
+    });
+  });
+
+  // Lines 84-86 of Dashboard.jsx: the `currentUserRef.current !== currentUser`
+  // branch inside the mount effect. The hook captures the active account's
+  // username on first render; on a subsequent render where MSAL reports a
+  // different active account, the effect must reset `initFetchCompleted` so
+  // the next render triggers a fresh data fetch.
+  describe('account switch (issue #141 user-change branch)', () => {
+    const okabe = { username: 'okabe.rintaro@future-gadget-lab.org' };
+    const kurisu = { username: 'makise.kurisu@future-gadget-lab.org' };
+
+    let consoleLogSpy;
+    beforeEach(() => {
+      // console.log is not a jest mock by default; install a spy so we can
+      // assert that the user-change branch surfaced the reload intent.
+      consoleLogSpy = jest.spyOn(console, 'log').mockImplementation(() => {});
+    });
+    afterEach(() => {
+      consoleLogSpy.mockRestore();
+    });
+
+    test('switching the active account reloads the dashboard data', async () => {
+      // jest.clearAllMocks() in the outer beforeEach resets every mock's
+      // implementation, so re-establish the success path for both the
+      // user-data fetch and the groups fetch before driving the
+      // account-switch path.
+      getUserData.mockResolvedValue({ message: 'Hello from API' });
+      getAllGroups.mockResolvedValue([]);
+
+      // First mount: Okabe. The mount effect captures his username into
+      // currentUserRef.current and runs the data fetch.
+      useMsal.mockReturnValue({
+        instance: {
+          ...mockMsalInstance,
+          getActiveAccount: jest.fn().mockReturnValue(okabe),
+        },
+      });
+
+      const { rerender } = render(<Dashboard />);
+
+      await waitFor(() => {
+        expect(screen.getByTestId('api-message-data')).toBeInTheDocument();
+      });
+
+      // Snapshot the call counts so the rerender's effect is visible.
+      const initialUserCalls = getUserData.mock.calls.length;
+      const initialGroupCalls = getAllGroups.mock.calls.length;
+
+      // Switch the active account to Kurisu and rerender. The effect's
+      // dependency array includes `instance.getActiveAccount()?.username`,
+      // so the effect re-runs. The branch fires (currentUserRef.current
+      // was Okabe's username, currentUser is now Kurisu's), and the
+      // dashboard triggers a fresh fetch.
+      useMsal.mockReturnValue({
+        instance: {
+          ...mockMsalInstance,
+          getActiveAccount: jest.fn().mockReturnValue(kurisu),
+        },
+      });
+      rerender(<Dashboard />);
+
+      await waitFor(() => {
+        expect(getUserData.mock.calls.length).toBeGreaterThan(initialUserCalls);
+        expect(getAllGroups.mock.calls.length).toBeGreaterThan(initialGroupCalls);
+      });
+
+      // The user-change branch logs to the console so an operator watching
+      // devtools can see why the dashboard re-fetched.
+      expect(consoleLogSpy).toHaveBeenCalledWith('User changed, reloading data...');
+
+      // Now force an effect re-run with the SAME user so the user-change
+      // branch is false on the second rerender. We do that by returning a
+      // new instance object (the `instance` dep in the effect's array is a
+      // fresh reference) but with the SAME active account username. The
+      // effect re-runs, `currentUserRef.current === currentUser` (still
+      // kurisu, from the prior switch), so the user-change branch is
+      // false, and `initFetchCompleted.current` is still true from the
+      // previous successful fetch — so the `if
+      // (!initFetchCompleted.current)` guard's false arm runs and NO new
+      // fetch is triggered.
+      const callsBeforeNoFetch = getUserData.mock.calls.length;
+      const logsBeforeNoFetch = consoleLogSpy.mock.calls.filter(
+        (call) => call[0] === 'User changed, reloading data...',
+      ).length;
+      useMsal.mockReturnValue({
+        instance: {
+          ...mockMsalInstance,
+          // Different reference (forces effect re-run) but the same
+          // account — currentUserRef.current === currentUser.
+          getActiveAccount: jest.fn().mockReturnValue(kurisu),
+        },
+      });
+      rerender(<Dashboard />);
+
+      // Give React a tick to flush any queued effects; the call count must
+      // stay flat (no fetch) and no NEW user-change log must fire.
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(getUserData.mock.calls.length).toBe(callsBeforeNoFetch);
+      const logsAfterNoFetch = consoleLogSpy.mock.calls.filter(
+        (call) => call[0] === 'User changed, reloading data...',
+      ).length;
+      expect(logsAfterNoFetch).toBe(logsBeforeNoFetch);
+    });
   });
 });

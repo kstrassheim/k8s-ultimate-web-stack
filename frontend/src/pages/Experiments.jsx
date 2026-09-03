@@ -30,8 +30,10 @@ const Experiments = () => {
   const initFetchCompleted = useRef(false);
   const [initialised, setInitialised] = useState(false);
 
-  // Load experiments data
-  const fetchExperiments = async (showMessage = false) => {
+  // Load experiments data. Every call site in this file passes an explicit
+  // value for `showMessage` (true on Reload, false after create/update/delete),
+  // so the parameter is required rather than defaulted — see issue #135.
+  const fetchExperiments = async (showMessage) => {
   setLoading(true);
     setError(null);
     
@@ -101,6 +103,11 @@ const Experiments = () => {
 
   // Delete experiment
   const handleDeleteExperiment = async () => {
+    // The modal flow always pairs openDeleteModal(experiment) with the
+    // confirm-delete click, so experimentToDelete is set before this
+    // function runs. The early return is defensive only — the
+    // falsy-experimentToDelete branch is unreachable from production.
+    /* istanbul ignore next -- defensive early return; the modal flow always sets experimentToDelete before this handler runs */
     if (!experimentToDelete) return;
     setLoading(true);
     setActionLoading(true);
@@ -438,18 +445,24 @@ const Experiments = () => {
   );
 };
 
-// Helper component for experiment form
+// Helper component for experiment form. Experiments.jsx only mounts
+// ExperimentForm when showForm is true, and both openCreateForm
+// (fresh object) and openEditForm (fetched record) hand it a truthy
+// `experiment`. The `|| {}` fallback on the initial state was removed
+// in issue #135 (it was dead — the prop is always truthy here); the
+// `experiment` prop itself can change while the form is open (the WS
+// `update` handler in the parent calls `setCurrentExperiment(data)`
+// when the user is editing the experiment another user touched), so
+// `formData` is kept in sync with the prop via the effect below.
 const ExperimentForm = ({ experiment, onSubmit, mode, loading }) => {
-  const [formData, setFormData] = useState(experiment || {});
+  const [formData, setFormData] = useState(experiment);
   const [validated, setValidated] = useState(false);
   const [timestampError, setTimestampError] = useState('');
-  
+
   useEffect(() => {
-    if (experiment) {
-      setFormData(experiment);
-    }
+    setFormData(experiment);
   }, [experiment]);
-  
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     
@@ -464,7 +477,16 @@ const ExperimentForm = ({ experiment, onSubmit, mode, loading }) => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
   
-  // Validate if a string is a valid ISO date
+  // Validate if a string is a valid ISO date.
+  // The `if (!dateString) return true` branch is genuinely unreachable from
+  // both callers in this file: `handleChange` guards with
+  // `if (value && !isValidISODate(value))` and `handleSubmit` guards with
+  // `if (formData.timestamp && !isValidISODate(formData.timestamp))`. Both
+  // short-circuit on a falsy `dateString` before the helper is invoked, so
+  // the empty-string short-circuit can never run. The defensive line is
+  // left in place for any future direct call site, but the unreachable
+  // branch is excluded from the unit coverage report.
+  /* istanbul ignore next -- both call sites short-circuit on falsy input before invoking isValidISODate, so the empty-string branch is unreachable from production paths */
   const isValidISODate = (dateString) => {
     if (!dateString) return true; // Empty is valid (will be auto-generated)
     

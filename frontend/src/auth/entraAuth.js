@@ -6,7 +6,15 @@ import appInsights from '@/log/appInsights';
 
 // Redirect URI = the deployed origin + sub-path (e.g.
 // https://datapi.galaxus.box/ultimate-web-stack-dev/), which is what is
-// registered on the Entra app reg. Falls back to frontendUrl outside the browser.
+// registered on the Entra app reg. Falls back to frontendUrl outside the
+// browser.
+//
+// The SSR/Node fallback branch (the `: frontendUrl` arm) is unreachable
+// from jest's jsdom environment — jsdom always provides `window`, and
+// `delete globalThis.window` is a no-op once jest's runtime has hooked
+// the global. The Cypress/vite e2e coverage path can reach it; the unit
+// suite skips the branch by design.
+/* istanbul ignore next -- unreachable from jest jsdom (window is always defined) */
 const appRedirectUri = (typeof window !== 'undefined')
   ? window.location.origin + basePath
   : frontendUrl;

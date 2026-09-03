@@ -12,8 +12,14 @@ const makeAuthenticatedRequest = async (instance, url, method = 'GET', body = nu
     appInsights.trackEvent({ name: `Api Call - Future Gadget Lab - ${method} ${url}` });
     
     const accessToken = await retrieveTokenForBackend(
-      instance, 
-      url.includes('admin') ? ['Group.Read.All'] : []
+      instance,
+      // No futureGadgetApi endpoint contains 'admin' (verified — the
+      // module's URL list is `/lab-experiments`, `/lab-experiments/:id`,
+      // `/worldline-status`, `/worldline-history`, `/divergence-readings`),
+      // so the `Group.Read.All` extra-scope handshake is dead in this
+      // module. The lift from api.js (which does call `/admin-data`) was
+      // removed as part of issue #135.
+      []
     );
     
     const headers = {

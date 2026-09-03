@@ -68,6 +68,12 @@ export const getAdminData = async (instance, message = "Hello from frontend", st
     message,
     status
   };
-  
+
   return makeAuthenticatedRequest(instance, '/admin-data', 'POST', body);
 };
+
+// Exported for unit testing of the internal helper — `makeAuthenticatedRequest`
+// is the workhorse for both `getUserData` and `getAdminData`, and exposing it
+// here lets the PUT branch of the body-serialisation ternary be reached from
+// tests without expanding the public API surface of the module.
+export const __test_makeAuthenticatedRequest = makeAuthenticatedRequest;

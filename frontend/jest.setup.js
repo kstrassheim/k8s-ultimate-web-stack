@@ -16,6 +16,18 @@ if (!global.TextDecoder) {
 
 global.import = { meta: { env: { MODE: 'test', PROD: false, DEV: false, BASE_URL: '/' } } };
 
+// src/config.js reads three values from its host environment:
+//   - `import.meta.env.MODE` — rewritten by jest.config-transformer.cjs to
+//     `globalThis.__VITE_MODE__` so the module is loadable in jest (Vite
+//     normally inlines this at build time).
+//   - `__PROD_URI__` and `__PROD_SOCKET_URI__` — Vite `define` substitutions
+//     in vite.config.js, populated here as globals so the same values the
+//     production build would inline are available to the loaded module.
+// config.test.js mutates these globals per test to drive each branch.
+globalThis.__VITE_MODE__ = 'test';
+globalThis.__PROD_URI__ = 'http://localhost:8000';
+globalThis.__PROD_SOCKET_URI__ = 'ws://localhost:8000';
+
 // react-router@8 eagerly imports `dist/production/lib/dom/ssr/routeModules.js`
 // from its main entry. That file uses `import.meta.hot` (Vite HMR syntax)
 // which @swc/jest passes through unchanged when emitting CommonJS, then
@@ -140,7 +152,14 @@ beforeEach(() => {
   jest.clearAllMocks();
 });
 
-// Automatically open preview after each test
+// Automatically open preview after each test. `debug()` writes to the DOM
+// (it serialises the rendered HTML for jest-preview's UI), so it only runs
+// under a Browser-like environment — tests that opt into a non-jsdom env
+// (e.g. config.node.test.js, which uses `@jest-environment node` to drive
+// the `typeof window === 'undefined'` branch in src/config.js) must skip
+// this or the call will throw "ReferenceError: document is not defined".
 afterEach(() => {
-  debug();
+  if (typeof document !== 'undefined') {
+    debug();
+  }
 });

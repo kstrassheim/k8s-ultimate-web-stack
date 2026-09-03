@@ -1,4 +1,4 @@
-import { getUserData, getAdminData } from './api';
+import { getUserData, getAdminData, __test_makeAuthenticatedRequest as makeAuthenticatedRequest } from './api';
 import { retrieveTokenForBackend } from '@/auth/entraAuth';
 import appInsights from '@/log/appInsights';
 
@@ -192,11 +192,39 @@ describe('API Module', () => {
       // Simulate network error
       const networkError = new Error('Network failure');
       global.fetch.mockRejectedValueOnce(networkError);
-      
+
       await expect(getAdminData(mockInstance)).rejects.toThrow();
-      
+
       expect(appInsights.trackException).toHaveBeenCalled();
       expect(console.error).toHaveBeenCalled();
+    });
+  });
+
+  describe('makeAuthenticatedRequest (internal helper)', () => {
+    it('serialises the body as JSON when method is PUT (POST/PUT branch)', async () => {
+      // The helper is exported via `__test_makeAuthenticatedRequest` so
+      // the PUT branch of `method === 'POST' || method === 'PUT'` can
+      // be exercised without changing the public api.js surface.
+      global.fetch.mockReset();
+      global.fetch.mockResolvedValueOnce({
+        ok: true,
+        json: jest.fn().mockResolvedValue({ ok: true }),
+      });
+
+      await makeAuthenticatedRequest(
+        mockInstance,
+        '/admin-data',
+        'PUT',
+        { message: 'updated', status: 200 },
+      );
+
+      // The fetch call must carry the serialised body because the
+      // branch fires for PUT.
+      const opts = global.fetch.mock.calls[0][1];
+      expect(opts.method).toBe('PUT');
+      expect(opts.body).toBe(
+        JSON.stringify({ message: 'updated', status: 200 }),
+      );
     });
   });
 });

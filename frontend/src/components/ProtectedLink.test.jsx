@@ -197,4 +197,49 @@ describe('ProtectedLink Component', () => {
     // Should not render the children because user doesn't have all required roles
     expect(screen.queryByTestId('test-content')).not.toBeInTheDocument();
   });
+
+  test('falls through to the [] fallback when account has no idTokenClaims at all', () => {
+    // The token-claims read is gated by `account.idTokenClaims?.roles ||
+    // []`. When `idTokenClaims` itself is undefined (e.g. a token that
+    // doesn't include the role claim) the optional-chain returns
+    // undefined and the `|| []` fallback fires, which is then fed to
+    // the toLowerCase()/includes() check. Without this test, the
+    // "idTokenClaims is undefined" arm of the optional-chain is the
+    // only branch the existing suite never reaches.
+    useMsal.mockReturnValue({
+      instance: {
+        getActiveAccount: () => ({})
+      }
+    });
+
+    render(
+      <ProtectedLink requiredRoles={['Admin']}>
+        <div data-testid="test-content">Test Content</div>
+      </ProtectedLink>
+    );
+
+    // No roles → no required-role match → children hidden.
+    expect(screen.queryByTestId('test-content')).not.toBeInTheDocument();
+  });
+
+  test('falls through to the [] fallback when idTokenClaims has no roles field', () => {
+    // Mirror of the above for the second arm of the optional-chain:
+    // `idTokenClaims` is present but `idTokenClaims.roles` is
+    // undefined. The `|| []` fallback still fires and the
+    // normalisation/every() check still runs against an empty list,
+    // so the children must be hidden.
+    useMsal.mockReturnValue({
+      instance: {
+        getActiveAccount: () => ({ idTokenClaims: {} })
+      }
+    });
+
+    render(
+      <ProtectedLink requiredRoles={['Admin']}>
+        <div data-testid="test-content">Test Content</div>
+      </ProtectedLink>
+    );
+
+    expect(screen.queryByTestId('test-content')).not.toBeInTheDocument();
+  });
 });

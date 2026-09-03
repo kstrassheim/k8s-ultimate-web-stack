@@ -112,16 +112,16 @@ describe('WebSocketClient', () => {
   describe('connect', () => {
     it('should establish WebSocket connection and authenticate', async () => {
       const result = await client.connect(mockInstance);
-      
+
       // Check WebSocket was created with correct URL
       expect(global.WebSocket).toHaveBeenCalledWith('wss://test.example.com/api/test-socket');
-      
+
       // Check token was requested
       expect(retrieveTokenForBackend).toHaveBeenCalledWith(mockInstance);
-      
+
       // Simulate WebSocket connected
       mockWebSocket.simulateOpen();
-      
+
       // Check authentication message was sent
       expect(mockWebSocket.send).toHaveBeenCalledWith(
         JSON.stringify({
@@ -129,27 +129,64 @@ describe('WebSocketClient', () => {
           token: 'mock-token-123'
         })
       );
-      
+
       // Check status was updated
       expect(client.connectionStatus).toBe('connected');
-      
+
       // Connection should return true for success
       expect(result).toBe(true);
-      
+
       // Check telemetry was logged
-      expect(appInsights.trackEvent).toHaveBeenCalledWith({ 
-        name: 'WebSocket - Connect' 
+      expect(appInsights.trackEvent).toHaveBeenCalledWith({
+        name: 'WebSocket - Connect'
       });
     });
-    
+
+    it('strips a trailing slash from the backend socket URL and a leading slash from the path', async () => {
+      // The `endsWith('/')` and `startsWith('/')` ternary branches both need
+      // exercising. Stub backendSocketUrl to include a trailing slash and
+      // build a client whose path also starts with one.
+      const { backendSocketUrl: ignored } = require('@/config');
+      const trailing = jest.requireMock('@/config');
+      trailing.backendSocketUrl = 'wss://test.example.com/';
+      const slashy = new WebSocketClient('/api/slashy-socket');
+      await slashy.connect(mockInstance);
+      expect(global.WebSocket).toHaveBeenCalledWith(
+        'wss://test.example.com/api/slashy-socket',
+      );
+      trailing.backendSocketUrl = 'wss://test.example.com';
+    });
+
+    it('skips the authentication send when the socket is still CONNECTING (readyState != OPEN)', async () => {
+      // The `if (this.socket.readyState === WebSocket.OPEN)` branch — when
+      // the open callback fires but the socket is still in CONNECTING
+      // state, the helper must NOT send the authenticate payload. The
+      // mock defaults readyState to OPEN; override it for this test.
+      const connectingSocket = {
+        url: 'wss://test.example.com/api/test-socket',
+        readyState: 0, // WebSocket.CONNECTING
+        send: jest.fn(),
+        close: jest.fn(),
+      };
+      global.WebSocket = jest.fn(() => connectingSocket);
+
+      const localClient = new WebSocketClient('api/test-socket');
+      await localClient.connect(mockInstance);
+      // Fire the onopen handler while the socket is still CONNECTING.
+      connectingSocket.onopen();
+      // The authenticate payload must NOT have been sent — the readyState
+      // check is the only thing that gates the send.
+      expect(connectingSocket.send).not.toHaveBeenCalled();
+    });
+
     it('should disconnect existing connection before creating a new one', async () => {
       // First connect
       await client.connect(mockInstance);
       const firstSocket = mockWebSocket;
-      
+
       // Connect again
       await client.connect(mockInstance);
-      
+
       // Check first socket was closed
       expect(firstSocket.close).toHaveBeenCalled();
     });
@@ -260,15 +297,44 @@ describe('WebSocketClient', () => {
         username: 'Test User',
         timestamp: '2025-04-06T12:00:00Z'
       };
-      
+
       mockWebSocket.simulateMessage(JSON.stringify(message));
-      
+
       expect(messageListener).toHaveBeenCalledWith(expect.objectContaining({
         text: 'Hello World',
         type: 'received',
         timestamp: expect.any(String),
         rawData: message
       }));
+    });
+
+    it('falls back to JSON.stringify when a "message"-typed payload has no content field', () => {
+      // Branch coverage for `jsonData.content || JSON.stringify(jsonData)`
+      // when `jsonData.content` is missing — the right-hand side fires
+      // and the listener sees a JSON-stringified payload.
+      const payloadWithoutContent = { type: 'message', username: 'tester' };
+      mockWebSocket.simulateMessage(JSON.stringify(payloadWithoutContent));
+      expect(messageListener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: JSON.stringify(payloadWithoutContent),
+          type: 'received',
+          rawData: payloadWithoutContent,
+        }),
+      );
+    });
+
+    it('falls back to JSON.stringify when a non-"message" payload has no content field', () => {
+      // The same fallback exists on the else branch (other structured
+      // types — create / update / delete).
+      const payloadWithoutContent = { type: 'create', id: '42' };
+      mockWebSocket.simulateMessage(JSON.stringify(payloadWithoutContent));
+      expect(messageListener).toHaveBeenCalledWith(
+        expect.objectContaining({
+          text: `[create] ${JSON.stringify(payloadWithoutContent)}`,
+          type: 'received',
+          rawData: payloadWithoutContent,
+        }),
+      );
     });
     
     it('should handle non-message JSON types', () => {
@@ -315,12 +381,47 @@ describe('WebSocketClient', () => {
     
     it('should handle JSON parse errors', () => {
       mockWebSocket.simulateMessage('{invalid json');
-      
+
       expect(messageListener).toHaveBeenCalledWith(expect.objectContaining({
         text: '{invalid json',
         type: 'received',
         rawData: '{invalid json'
       }));
+    });
+
+    it('identifies a plain-text sent message by "You sent:" prefix (non-JSON branch)', () => {
+      // Mirror the JSON-path "You sent:" test, but for the catch block:
+      // when the payload is plain text (not valid JSON), the helper still
+      // has to recognise the server's "You sent:" confirmation prefix.
+      mockWebSocket.simulateMessage('You sent: Hello, plain text!');
+
+      expect(messageListener).toHaveBeenCalledWith(expect.objectContaining({
+        text: 'You sent: Hello, plain text!',
+        type: 'sent',
+        rawData: 'You sent: Hello, plain text!',
+      }));
+    });
+
+    it('catches listener errors and reports them via appInsights + logger', () => {
+      // The inner try/catch around the listener-dispatch loop catches
+      // synchronous throws from a misbehaving consumer and reports them
+      // instead of letting them bubble up and kill the WebSocket handler.
+      const throwingListener = jest.fn(() => {
+        throw new Error('listener exploded');
+      });
+      client.subscribe(throwingListener);
+
+      // A normal message still triggers the listener and hits the catch.
+      mockWebSocket.simulateMessage('plain text');
+
+      expect(throwingListener).toHaveBeenCalled();
+      expect(appInsights.trackException).toHaveBeenCalledWith(
+        expect.objectContaining({ error: expect.any(Error) }),
+      );
+      expect(console.error).toHaveBeenCalledWith(
+        'Error processing WebSocket message:',
+        expect.any(Error),
+      );
     });
   });
   
@@ -395,14 +496,28 @@ describe('WebSocketClient', () => {
     
     it('should add and remove status listeners', () => {
       const listener = jest.fn();
-      
+
       // Subscribe
       const unsubscribe = client.subscribeToStatus(listener);
       expect(client.statusListeners).toContain(listener);
-      
+
       // Unsubscribe
       unsubscribe();
       expect(client.statusListeners).not.toContain(listener);
+    });
+  });
+
+  describe('getStatus', () => {
+    it('returns the current connection status', () => {
+      // Initial state — before connect(), the constructor seeds 'disconnected'.
+      expect(client.getStatus()).toBe('disconnected');
+
+      // After connect + open, the status flips to 'connected' (driven by
+      // the WebSocket onopen handler setting readyState === WebSocket.OPEN).
+      return client.connect(mockInstance).then(() => {
+        mockWebSocket.simulateOpen();
+        expect(client.getStatus()).toBe('connected');
+      });
     });
   });
 });
